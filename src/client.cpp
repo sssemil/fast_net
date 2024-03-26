@@ -6,10 +6,13 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "consts.h"
 #include "memory_block.h"
+#include "models/get_page.h"
 #include "static_config.h"
 
-#define BUFFER_SIZE 4096
+MemoryBlock memory_block(PAGE_SIZE, PAGE_COUNT,
+                         new PseudoRandomFillingStrategy());
 
 int main() {
   Config::load_config();
@@ -18,7 +21,7 @@ int main() {
 
   sockaddr_in serv_addr{};
   int sock;
-  char buffer[BUFFER_SIZE] = {};
+  GetPageResponse buffer = {};
 
   if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     std::cerr << "Socket creation error" << std::endl;
@@ -44,20 +47,21 @@ int main() {
   int verified_count = 0;
 
   for (int i = 0; i < Config::num_requests; ++i) {
-    const int start_pos = rand() % (MemoryBlock::size - BUFFER_SIZE);
-    // Random start position within the server's memory block
-    std::string request = std::to_string(start_pos);
+    const uint32_t random_page = rand() % PAGE_COUNT;
+
+    auto request = GetPageRequest{.page_number = random_page};
 
     auto start = std::chrono::high_resolution_clock::now();
-    send(sock, request.c_str(), request.length(), 0);
-    if (const long valread = read(sock, buffer, BUFFER_SIZE); valread <= 0) {
+    send(sock, &request, sizeof(request), 0);
+    if (const long valread = read(sock, &buffer, sizeof(GetPageResponse));
+        valread <= 0) {
       std::cerr << "Error reading from server" << std::endl;
       break;
     }
 
     auto end = std::chrono::high_resolution_clock::now();
 
-    if (MemoryBlock::verify(buffer, start_pos, BUFFER_SIZE)) {
+    if (memory_block.verify(buffer.content, random_page)) {
       verified_count++;
     } else {
       std::cerr << "Data verification failed." << std::endl;

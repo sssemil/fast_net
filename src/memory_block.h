@@ -1,52 +1,70 @@
 #pragma once
 
-#include <cstdlib>
-#include <functional>
-#include <utility>
+#include <array>
+#include <vector>
+
+#include "consts.h"
+
+class IFillingStrategy {
+ public:
+  virtual ~IFillingStrategy() = default;
+  [[nodiscard]] virtual uint8_t get_value_at(size_t position) const = 0;
+};
+
+class AlphabeticalFillingStrategy final : public IFillingStrategy {
+ public:
+  [[nodiscard]] uint8_t get_value_at(const size_t position) const override {
+    return 'a' + position % 26;
+  }
+};
+
+class PseudoRandomFillingStrategy final : public IFillingStrategy {
+  unsigned int seed;
+
+ public:
+  explicit PseudoRandomFillingStrategy(
+      const unsigned int seed = PSEUDO_RANDOM_SEED)
+      : seed(seed) {}
+
+  [[nodiscard]] uint8_t get_value_at(const size_t position) const override {
+    return static_cast<uint8_t>((position * 2654435761u + seed) % 256);
+  }
+};
 
 class MemoryBlock {
  public:
-  static constexpr int size = 1024 * 1024;
-  char data[size]{};
+  std::vector<uint8_t> data;
+  size_t page_size;
+  size_t page_count;
+  const IFillingStrategy* strategy;
 
-  MemoryBlock() {
-    setFillingStrategy(fillAlphabetically);
+  MemoryBlock(const size_t page_size, const size_t page_count,
+              const IFillingStrategy* strategy)
+      : data(page_size * page_count, 0),
+        page_size(page_size),
+        page_count(page_count),
+        strategy(strategy) {
+    if (strategy == nullptr) {
+      throw std::runtime_error("Filling strategy is not set");
+    }
     fill();
-  }
-  void setFillingStrategy(std::function<void(char *, int)> strategy) {
-    fillingStrategy = std::move(strategy);
   }
 
   void fill() {
-    if (fillingStrategy) {
-      fillingStrategy(data, size);
-    } else {
-      // TODO: raise an exception
+    for (size_t i = 0; i < data.size(); ++i) {
+      data[i] = strategy->get_value_at(i);
     }
   }
-  static bool verify(const char *buffer, int startPosition, int bufferSize) {
-    for (int i = 0; i < bufferSize; ++i) {
-      if (char expectedChar = 'a' + (startPosition + i) % 26;
-          buffer[i] != expectedChar) {
+
+  [[nodiscard]] bool verify(
+      const std::array<uint8_t, PAGE_SIZE>& page_content,
+      const size_t page_number) const {
+    for (size_t i = 0; i < PAGE_SIZE; ++i) {
+      if (page_content[i] !=
+          strategy->get_value_at(page_number * PAGE_SIZE + i)) {
         return false;
       }
     }
     return true;
-  }
-
- private:
-  std::function<void(char *, int)> fillingStrategy;
-
-  static void fillAlphabetically(char *data, int size) {
-    for (int i = 0; i < size; ++i) {
-      data[i] = i % 26 + 'a';
-    }
-  }
-
-  static void fillWithPseudoRandom(char *data, int size, unsigned int seed) {
-    srand(seed);
-    for (int i = 0; i < size; ++i) {
-      data[i] = rand() % 256;
-    }
   }
 };

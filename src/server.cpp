@@ -6,31 +6,41 @@
 #include <iostream>
 #include <thread>
 
+#include "consts.h"
 #include "memory_block.h"
+#include "models/get_page.h"
 #include "static_config.h"
 
-#define BUFFER_SIZE 4096  // 4KB
-
-MemoryBlock memory_block;
+MemoryBlock memory_block(PAGE_SIZE, PAGE_COUNT,
+                         new PseudoRandomFillingStrategy());
 
 void handle_client(const int client_socket) {
-  char buffer[1024] = {};
   while (true) {
-    if (const long val_read = read(client_socket, buffer, 1024);
+    GetPageRequest request{};
+    if (const long val_read = read(client_socket, &request, sizeof(request));
         val_read <= 0) {
       std::cout << "Client disconnected or error" << std::endl;
       break;
     }
-    if (const int start_position = atoi(buffer);
-        start_position < 0 ||
-        start_position >= MemoryBlock::size - BUFFER_SIZE) {
-      std::cout << "Invalid start position." << std::endl;
+
+    if (request.page_number >= PAGE_COUNT) {
+      std::cout << "Invalid page number: " << request.page_number << std::endl;
+      // TODO: Define a better response struct for errors
+      GetPageResponse response{};
+      response.status = INVALID_PAGE_NUMBER;
+      send(client_socket, &response, sizeof(response), 0);
+      std::cout << "Error sent." << std::endl;
     } else {
-      // Send 4KB of data starting from the requested position
-      send(client_socket, memory_block.data + start_position, BUFFER_SIZE, 0);
+      GetPageResponse response{};
+      response.status = SUCCESS;
+      // TODO: Optimize this copy operation, we can just read and send the data
+      // from the page memblock directly
+      std::memcpy((void *)response.content.data(),
+                  memory_block.data.data() + request.page_number * PAGE_SIZE,
+                  PAGE_SIZE);
+      send(client_socket, &response, sizeof(response), 0);
       // std::cout << "Data sent." << std::endl;
     }
-    memset(buffer, 0, 1024);
   }
   close(client_socket);
 }
@@ -58,12 +68,13 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  if (listen(server_fd, 1024) < 0) {
+  if (listen(server_fd, MAX_QUEUE) < 0) {
     perror("listen");
     exit(EXIT_FAILURE);
   }
 
-  std::cout << "Server started. Listening on port " << Config::port << std::endl;
+  std::cout << "Server started. Listening on port " << Config::port
+            << std::endl;
 
   while (true) {
     int new_socket;
