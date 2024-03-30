@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "consts.h"
+#include "consts.hpp"
 
 class IFillingStrategy {
  public:

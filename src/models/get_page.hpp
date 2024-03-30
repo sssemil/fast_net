@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../consts.h"
+#include "../consts.hpp"
 
 enum GetPageStatus : uint32_t {
   SUCCESS = 200,

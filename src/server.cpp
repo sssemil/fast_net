@@ -5,11 +5,11 @@
 
 #include <thread>
 
-#include "consts.h"
-#include "memory_block.h"
-#include "models/get_page.h"
+#include "consts.hpp"
+#include "memory_block.hpp"
+#include "models/get_page.hpp"
 #include "spdlog/spdlog.h"
-#include "static_config.h"
+#include "static_config.hpp"
 
 void handle_client(const int client_socket,
                    const MemoryBlock<PAGE_SIZE> &memory_block) {

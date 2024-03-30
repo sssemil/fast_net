@@ -5,11 +5,11 @@
 #include <chrono>
 #include <cstdlib>
 
-#include "consts.h"
-#include "memory_block.h"
-#include "models/get_page.h"
+#include "consts.hpp"
+#include "memory_block.hpp"
+#include "models/get_page.hpp"
 #include "spdlog/spdlog.h"
-#include "static_config.h"
+#include "static_config.hpp"
 
 int main() {
   Config::load_config();
@@ -86,8 +86,8 @@ int main() {
 
     if (response.get_status() != SUCCESS) {
       const auto error_string = std::string("Server reported error ") +
-                          std::to_string(response.get_status()) + " for page " +
-                          std::to_string(page_number);
+                                std::to_string(response.get_status()) +
+                                " for page " + std::to_string(page_number);
       throw std::runtime_error(error_string);
     }
 
