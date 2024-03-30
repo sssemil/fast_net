@@ -2,44 +2,43 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <cstring>
-#include <iostream>
 #include <thread>
 
 #include "consts.h"
 #include "memory_block.h"
 #include "models/get_page.h"
+#include "spdlog/spdlog.h"
 #include "static_config.h"
 
-MemoryBlock memory_block(PAGE_SIZE, PAGE_COUNT,
-                         new PseudoRandomFillingStrategy());
+MemoryBlock<PAGE_SIZE> memory_block(PAGE_COUNT,
+                                    new PseudoRandomFillingStrategy());
 
 void handle_client(const int client_socket) {
   while (true) {
     GetPageRequest request{};
     if (const long val_read = read(client_socket, &request, sizeof(request));
-        val_read <= 0) {
-      std::cout << "Client disconnected or error" << std::endl;
+        val_read != sizeof(request)) {
+      spdlog::info("Client disconnected or error ({})", val_read);
       break;
     }
+    request.to_host_order();
+
+    spdlog::debug("Requested page number: {}", request.page_number);
 
     if (request.page_number >= PAGE_COUNT) {
-      std::cout << "Invalid page number: " << request.page_number << std::endl;
-      // TODO: Define a better response struct for errors
-      GetPageResponse response{};
-      response.status = INVALID_PAGE_NUMBER;
-      send(client_socket, &response, sizeof(response), 0);
-      std::cout << "Error sent." << std::endl;
+      spdlog::error("Invalid page number: {}", request.page_number);
+      constexpr GetPageStatus status = INVALID_PAGE_NUMBER;
+      uint32_t net_status = htonl(status);
+      send(client_socket, &net_status, sizeof(net_status), 0);
+      spdlog::info("Error sent.");
     } else {
-      GetPageResponse response{};
-      response.status = SUCCESS;
-      // TODO: Optimize this copy operation, we can just read and send the data
-      // from the page memblock directly
-      std::memcpy((void *)response.content.data(),
-                  memory_block.data.data() + request.page_number * PAGE_SIZE,
-                  PAGE_SIZE);
-      send(client_socket, &response, sizeof(response), 0);
-      // std::cout << "Data sent." << std::endl;
+      constexpr GetPageStatus status = SUCCESS;
+      uint32_t net_status = htonl(status);
+      send(client_socket, &net_status, sizeof(net_status), 0);
+      send(client_socket,
+           memory_block.data.data() + request.page_number * PAGE_SIZE,
+           PAGE_SIZE, 0);
+      spdlog::debug("Data sent.");
     }
   }
   close(client_socket);
@@ -47,14 +46,15 @@ void handle_client(const int client_socket) {
 
 int main() {
   Config::load_config();
-  std::cout << "Port: " << Config::port << std::endl;
+
+  spdlog::info("Port: {}", Config::port);
 
   int server_fd;
   sockaddr_in address{};
   int addr_len = sizeof(address);
 
   if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-    perror("socket failed");
+    spdlog::critical("socket failed");
     exit(EXIT_FAILURE);
   }
 
@@ -64,23 +64,22 @@ int main() {
 
   if (bind(server_fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) <
       0) {
-    perror("bind failed");
+    spdlog::critical("bind failed");
     exit(EXIT_FAILURE);
   }
 
   if (listen(server_fd, MAX_QUEUE) < 0) {
-    perror("listen");
+    spdlog::critical("listen");
     exit(EXIT_FAILURE);
   }
 
-  std::cout << "Server started. Listening on port " << Config::port
-            << std::endl;
+  spdlog::info("Server started. Listening on port {}", Config::port);
 
   while (true) {
     int new_socket;
     if ((new_socket = accept(server_fd, reinterpret_cast<sockaddr *>(&address),
                              reinterpret_cast<socklen_t *>(&addr_len))) < 0) {
-      perror("accept");
+      spdlog::critical("accept");
       exit(EXIT_FAILURE);
     }
 

@@ -4,27 +4,26 @@
 
 #include <chrono>
 #include <cstdlib>
-#include <iostream>
 
 #include "consts.h"
 #include "memory_block.h"
 #include "models/get_page.h"
+#include "spdlog/spdlog.h"
 #include "static_config.h"
 
-MemoryBlock memory_block(PAGE_SIZE, PAGE_COUNT,
-                         new PseudoRandomFillingStrategy());
-
+MemoryBlockVerifier<PAGE_SIZE> memory_block_verifier(
+    PAGE_COUNT, new PseudoRandomFillingStrategy());
 int main() {
   Config::load_config();
-  std::cout << "Port: " << Config::port << std::endl;
-  std::cout << "Number of Requests: " << Config::num_requests << std::endl;
+
+  spdlog::info("Port: {}", Config::port);
+  spdlog::info("Number of Requests: {}", Config::num_requests);
 
   sockaddr_in serv_addr{};
   int sock;
-  GetPageResponse buffer = {};
 
   if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    std::cerr << "Socket creation error" << std::endl;
+    spdlog::error("Socket creation error");
     return -1;
   }
 
@@ -32,52 +31,95 @@ int main() {
   serv_addr.sin_port = htons(Config::port);
 
   if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
-    std::cerr << "Invalid address / Address not supported" << std::endl;
+    spdlog::error("Invalid address / Address not supported");
     return -1;
   }
 
-  if (connect(sock, reinterpret_cast<sockaddr *>(&serv_addr),
+  if (connect(sock, reinterpret_cast<sockaddr*>(&serv_addr),
               sizeof(serv_addr)) < 0) {
-    std::cerr << "Connection failed" << std::endl;
+    spdlog::error("Connection failed");
     return -1;
   }
 
-  srand(time(nullptr));  // Seed the random number generator
+  // TODO: Consider using a constant seed for reproducibility
+  srand(time(nullptr));  // NOLINT(*-msc51-cpp)
   std::chrono::duration<double, std::milli> total_time(0);
-  int verified_count = 0;
 
+  GetPageRequest request{};
+  GetPageResponse response{};
+  const auto start_total = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < Config::num_requests; ++i) {
-    const uint32_t random_page = rand() % PAGE_COUNT;
-
-    auto request = GetPageRequest{.page_number = random_page};
-
     auto start = std::chrono::high_resolution_clock::now();
-    send(sock, &request, sizeof(request), 0);
-    if (const long valread = read(sock, &buffer, sizeof(GetPageResponse));
-        valread <= 0) {
-      std::cerr << "Error reading from server" << std::endl;
-      break;
+
+    const uint32_t page_number = rand() % PAGE_COUNT;  // NOLINT(*-msc50-cpp)
+
+    request.page_number = page_number;
+    request.to_network_order();
+    if (send(sock, &request, sizeof(request), 0) != sizeof(request)) {
+      spdlog::error("Error sending request to server");
+      continue;
+    }
+
+    char* responsePtr = reinterpret_cast<char*>(&response);
+    ssize_t read_count = 0;
+    while (read_count < sizeof(response)) {
+      ssize_t curr_read_count =
+          read(sock, responsePtr + read_count, sizeof(response) - read_count);
+      if (curr_read_count < 0) {
+        spdlog::critical("Error reading response from server");
+        return -1;  // Exiting on first critical error
+      } else if (curr_read_count == 0) {
+        spdlog::warn("Connection closed by server");
+        break;  // Connection closed by server
+      }
+      read_count += curr_read_count;
+    }
+
+    if (read_count < sizeof(response)) {
+      spdlog::error("Incomplete response received");
+      continue;  // Handling incomplete response but not exiting the loop
+    }
+
+    response.to_host_order();
+
+    if (response.get_status() != SUCCESS) {
+      spdlog::error("Server reported error {} for page {}",
+                    static_cast<uint32_t>(response.get_status()), page_number);
+      continue;  // Handling error response but not exiting the loop
     }
 
     auto end = std::chrono::high_resolution_clock::now();
+    total_time += end - start;
 
-    if (memory_block.verify(buffer.content, random_page)) {
-      verified_count++;
-    } else {
-      std::cerr << "Data verification failed." << std::endl;
+    if (!memory_block_verifier.verify(response.content, page_number)) {
+      spdlog::error("Data verification failed for page {}", page_number);
     }
 
-    total_time += end - start;
-    // std::cout << "Received chunk starting with: " << std::string(buffer,
-    // buffer + 10) << std::endl;
+    if (i % 10 == 0) {
+      auto now = std::chrono::high_resolution_clock::now();
+      const auto elapsed =
+          std::chrono::duration_cast<std::chrono::milliseconds>(now -
+                                                                start_total)
+              .count();
+      const double seconds = static_cast<double>(elapsed) / 1000.0;
+      const double rate = (i + 1) / seconds;
+      spdlog::info("Processed {}/{} requests [{} req/s]", i,
+                   Config::num_requests, rate);
+    }
   }
+  const auto end_total = std::chrono::high_resolution_clock::now();
 
   const double avg_time =
       total_time.count() / static_cast<double>(Config::num_requests);
-  std::cout << "Average response time for " << Config::num_requests
-            << " requests: " << avg_time << " ms" << std::endl;
-  std::cout << "Verified " << verified_count << " out of "
-            << Config::num_requests << " requests." << std::endl;
+  const double avg_loop_time =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end_total -
+                                                            start_total)
+          .count() /
+      static_cast<double>(Config::num_requests);
+  spdlog::info("Average response time for {} requests: {} ms",
+               Config::num_requests, avg_time);
+  spdlog::info("Average loop time for {} loops: {} ms", Config::num_requests,
+               avg_loop_time);
 
   close(sock);
   return 0;
