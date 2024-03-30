@@ -48,7 +48,6 @@ int main() {
 
   GetPageRequest request{};
   GetPageResponse response{};
-  const auto start_total = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < Config::num_requests; ++i) {
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -95,34 +94,30 @@ int main() {
     total_time += end - start;
 
     if (!memory_block_verifier.verify(response.content, page_number)) {
-      spdlog::error("Data verification failed for page {}", page_number);
+      throw std::runtime_error("Data verification failed for page " +
+                               std::to_string(page_number));
     }
 
-    if (i % 1000 == 0) {
-      auto now = std::chrono::high_resolution_clock::now();
-      const auto elapsed =
-          std::chrono::duration_cast<std::chrono::milliseconds>(now -
-                                                                start_total)
-              .count();
-      const double seconds = static_cast<double>(elapsed) / 1000.0;
-      const double rate = (i + 1) / seconds;
-      spdlog::info("Processed {}/{} requests [{} req/s]", i,
-                   Config::num_requests, rate);
+    if (i % 1000 == 999) {
+      const double millis = total_time.count();
+      const double rate = 1000 * ((i + 1) / millis);
+      const double mbps = rate * sizeof(GetPageResponse) * 8 / (1000 * 1000);
+      spdlog::info("Processed {}/{} requests [{} req/s][{} Mb/s]", i + 1,
+                   Config::num_requests, rate, mbps);
     }
   }
-  const auto end_total = std::chrono::high_resolution_clock::now();
 
+  const double total_time_seconds = total_time.count() / 1000;
   const double avg_time =
-      total_time.count() / static_cast<double>(Config::num_requests);
-  const double avg_loop_time =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end_total -
-                                                            start_total)
-          .count() /
-      static_cast<double>(Config::num_requests);
+      total_time_seconds / static_cast<double>(Config::num_requests);
+  const double avg_rate =
+      static_cast<double>(Config::num_requests) / total_time_seconds;
+  const double avg_mbps =
+      avg_rate * sizeof(GetPageResponse) * 8 / (1000 * 1000);
   spdlog::info("Average response time for {} requests: {} ms",
                Config::num_requests, avg_time);
-  spdlog::info("Average loop time for {} loops: {} ms", Config::num_requests,
-               avg_loop_time);
+  spdlog::info("Average rate: {} req/s", avg_rate);
+  spdlog::info("Average throughput: {} Mb/s", avg_mbps);
 
   close(sock);
   return 0;
