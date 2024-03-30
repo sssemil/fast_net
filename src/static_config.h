@@ -12,6 +12,7 @@ class Config {
   static in_port_t port;
   static size_t num_requests;
   static std::string logging_level;
+  static size_t page_count;
 
   static void load_config(const std::string& env_file_path) {
     std::ifstream env_file(env_file_path.data());
@@ -59,6 +60,10 @@ class Config {
         num_requests = std::stoul(value);
       } else if (key == "LOGGING_LEVEL") {
         logging_level = value;
+      } else if (key == "PAGE_COUNT") {
+        page_count = std::stoul(value);
+      } else {
+        spdlog::warn("Unknown key '{}'.", key);
       }
     }
   }
@@ -87,3 +92,4 @@ class Config {
 in_port_t Config::port = 0;
 size_t Config::num_requests = 0;
 std::string Config::logging_level = "INFO";
+size_t Config::page_count = 0;

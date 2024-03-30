@@ -11,10 +11,11 @@
 #include "spdlog/spdlog.h"
 #include "static_config.h"
 
-MemoryBlockVerifier<PAGE_SIZE> memory_block_verifier(
-    PAGE_COUNT, new PseudoRandomFillingStrategy());
 int main() {
   Config::load_config();
+
+  const MemoryBlockVerifier<PAGE_SIZE> memory_block_verifier(
+      Config::page_count, new PseudoRandomFillingStrategy());
 
   spdlog::info("Port: {}", Config::port);
   spdlog::info("Number of Requests: {}", Config::num_requests);
@@ -51,41 +52,43 @@ int main() {
   for (int i = 0; i < Config::num_requests; ++i) {
     auto start = std::chrono::high_resolution_clock::now();
 
-    const uint32_t page_number = rand() % PAGE_COUNT;  // NOLINT(*-msc50-cpp)
+    const uint32_t page_number =
+        rand() % Config::page_count;  // NOLINT(*-msc50-cpp)
 
     request.page_number = page_number;
     request.to_network_order();
     if (send(sock, &request, sizeof(request), 0) != sizeof(request)) {
-      spdlog::error("Error sending request to server");
-      continue;
+      throw std::runtime_error("Error sending request to server");
     }
 
-    char* responsePtr = reinterpret_cast<char*>(&response);
+    const auto response_ptr = reinterpret_cast<uint8_t*>(&response);
     ssize_t read_count = 0;
+    size_t read_pass = 0;
     while (read_count < sizeof(response)) {
-      ssize_t curr_read_count =
-          read(sock, responsePtr + read_count, sizeof(response) - read_count);
+      spdlog::debug("read_count: {} (read pass: {})", read_count, read_pass);
+      read_pass++;
+      const ssize_t curr_read_count =
+          read(sock, response_ptr + read_count, sizeof(response) - read_count);
       if (curr_read_count < 0) {
-        spdlog::critical("Error reading response from server");
-        return -1;  // Exiting on first critical error
-      } else if (curr_read_count == 0) {
-        spdlog::warn("Connection closed by server");
-        break;  // Connection closed by server
+        throw std::runtime_error("Error reading response from server");
+      }
+      if (curr_read_count == 0) {
+        throw std::runtime_error("Connection closed by server");
       }
       read_count += curr_read_count;
     }
 
-    if (read_count < sizeof(response)) {
-      spdlog::error("Incomplete response received");
-      continue;  // Handling incomplete response but not exiting the loop
+    if (read_count != sizeof(response)) {
+      throw std::runtime_error("Incomplete response received");
     }
 
     response.to_host_order();
 
     if (response.get_status() != SUCCESS) {
-      spdlog::error("Server reported error {} for page {}",
-                    static_cast<uint32_t>(response.get_status()), page_number);
-      continue;  // Handling error response but not exiting the loop
+      const auto error_string = std::string("Server reported error ") +
+                          std::to_string(response.get_status()) + " for page " +
+                          std::to_string(page_number);
+      throw std::runtime_error(error_string);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -95,7 +98,7 @@ int main() {
       spdlog::error("Data verification failed for page {}", page_number);
     }
 
-    if (i % 10 == 0) {
+    if (i % 1000 == 0) {
       auto now = std::chrono::high_resolution_clock::now();
       const auto elapsed =
           std::chrono::duration_cast<std::chrono::milliseconds>(now -

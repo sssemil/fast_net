@@ -1,5 +1,6 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include <thread>
@@ -10,10 +11,8 @@
 #include "spdlog/spdlog.h"
 #include "static_config.h"
 
-MemoryBlock<PAGE_SIZE> memory_block(PAGE_COUNT,
-                                    new PseudoRandomFillingStrategy());
-
-void handle_client(const int client_socket) {
+void handle_client(const int client_socket,
+                   const MemoryBlock<PAGE_SIZE> &memory_block) {
   while (true) {
     GetPageRequest request{};
     if (const long val_read = read(client_socket, &request, sizeof(request));
@@ -25,7 +24,7 @@ void handle_client(const int client_socket) {
 
     spdlog::debug("Requested page number: {}", request.page_number);
 
-    if (request.page_number >= PAGE_COUNT) {
+    if (request.page_number >= Config::page_count) {
       spdlog::error("Invalid page number: {}", request.page_number);
       constexpr GetPageStatus status = INVALID_PAGE_NUMBER;
       uint32_t net_status = htonl(status);
@@ -34,10 +33,15 @@ void handle_client(const int client_socket) {
     } else {
       constexpr GetPageStatus status = SUCCESS;
       uint32_t net_status = htonl(status);
-      send(client_socket, &net_status, sizeof(net_status), 0);
-      send(client_socket,
-           memory_block.data.data() + request.page_number * PAGE_SIZE,
-           PAGE_SIZE, 0);
+      iovec iov[2];
+      iov[0].iov_base = &net_status;
+      iov[0].iov_len = sizeof(net_status);
+      iov[1].iov_base = const_cast<uint8_t *>(memory_block.data.data()) +
+                        request.page_number * PAGE_SIZE;
+      iov[1].iov_len = PAGE_SIZE;
+      if (writev(client_socket, iov, 2) < 0) {
+        spdlog::error("Error sending combined response to client");
+      }
       spdlog::debug("Data sent.");
     }
   }
@@ -46,6 +50,9 @@ void handle_client(const int client_socket) {
 
 int main() {
   Config::load_config();
+
+  MemoryBlock<PAGE_SIZE> memory_block(Config::page_count,
+                                      new PseudoRandomFillingStrategy());
 
   spdlog::info("Port: {}", Config::port);
 
@@ -83,7 +90,8 @@ int main() {
       exit(EXIT_FAILURE);
     }
 
-    std::thread client_thread(handle_client, new_socket);
+    std::thread client_thread(handle_client, new_socket,
+                              std::ref(memory_block));
     client_thread.detach();
   }
 }
