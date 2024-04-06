@@ -101,8 +101,8 @@ int main() {
     if (i % 1000 == 999) {
       const double millis = total_time.count();
       const double rate = 1000 * ((i + 1) / millis);
-      const double mbps = rate * sizeof(GetPageResponse) * 8 / (1000 * 1000);
-      spdlog::info("Processed {}/{} requests [{} req/s][{} Mb/s]", i + 1,
+      const double mbps = rate * sizeof(GetPageResponse) * 8 / (1000 * 1000 * 1000);
+      spdlog::info("Processed {}/{} requests [{:03.2f} req/s][{:03.2f} Gb/s]", i + 1,
                    Config::num_requests, rate, mbps);
     }
   }
@@ -112,12 +112,13 @@ int main() {
       total_time_seconds / static_cast<double>(Config::num_requests);
   const double avg_rate =
       static_cast<double>(Config::num_requests) / total_time_seconds;
-  const double avg_mbps =
-      avg_rate * sizeof(GetPageResponse) * 8 / (1000 * 1000);
-  spdlog::info("Average response time for {} requests: {} ms",
+  // TODO: Account for the full packet size?
+  const double avg_gbps =
+      avg_rate * sizeof(GetPageResponse) * 8 / (1000 * 1000 * 1000);
+  spdlog::info("Average response time for {} requests: {} s",
                Config::num_requests, avg_time);
-  spdlog::info("Average rate: {} req/s", avg_rate);
-  spdlog::info("Average throughput: {} Mb/s", avg_mbps);
+  spdlog::info("Average rate: {:03.2f} req/s", avg_rate);
+  spdlog::info("Average throughput: {:03.2f} Gb/s", avg_gbps);
 
   close(sock);
   return 0;
