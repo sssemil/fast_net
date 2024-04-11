@@ -1,0 +1,177 @@
+#include <liburing.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cstring>
+#include <iostream>
+
+#include "memory_block.hpp"
+#include "models/get_page.hpp"
+#include "spdlog/spdlog.h"
+#include "static_config.hpp"
+
+#define IO_URING_QUEUE_DEPTH 256
+
+struct custom_request {
+  int event_type;
+  int client_socket;
+  struct iovec iov;
+};
+
+enum EventType { ACCEPT, READ, WRITE };
+
+struct io_uring ring;
+
+void setup_io_uring() {
+  if (io_uring_queue_init(IO_URING_QUEUE_DEPTH, &ring, 0) < 0) {
+    spdlog::critical("Failed to initialize io_uring");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void add_accept_request(int server_socket, sockaddr_in* client_addr,
+                        socklen_t* client_addr_len) {
+  struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
+  auto* req = new custom_request{ACCEPT, server_socket};
+  io_uring_prep_accept(sqe, server_socket, (sockaddr*)client_addr,
+                       client_addr_len, 0);
+  io_uring_sqe_set_data(sqe, req);
+  io_uring_submit(&ring);
+}
+
+void add_read_request(int client_socket) {
+  struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
+  auto* req = new custom_request{READ, client_socket};
+  req->iov.iov_base = malloc(
+      sizeof(GetPageRequest));  // Allocate memory for reading a GetPageRequest
+  req->iov.iov_len = sizeof(GetPageRequest);
+
+  io_uring_prep_readv(sqe, client_socket, &req->iov, 1, 0);
+  io_uring_sqe_set_data(sqe, req);
+  io_uring_submit(&ring);
+}
+
+void add_write_request(int client_socket, const char* data, size_t length) {
+  struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
+  auto* req = new custom_request{WRITE, client_socket};
+  req->iov.iov_base = malloc(length);
+  memcpy(req->iov.iov_base, data, length);
+  req->iov.iov_len = length;
+
+  io_uring_prep_writev(sqe, client_socket, &req->iov, 1, 0);
+  io_uring_sqe_set_data(sqe, req);
+  io_uring_submit(&ring);
+}
+
+void event_loop(int server_socket, const MemoryBlock<PAGE_SIZE>& memory_block) {
+  struct sockaddr_in client_addr {};
+  socklen_t client_addr_len = sizeof(client_addr);
+
+  add_accept_request(server_socket, &client_addr, &client_addr_len);
+
+  while (true) {
+    struct io_uring_cqe* cqe;
+    io_uring_wait_cqe(&ring, &cqe);
+    auto* req = (custom_request*)io_uring_cqe_get_data(cqe);
+
+    if (cqe->res < 0) {
+      spdlog::error("IO operation failed: {}", strerror(-cqe->res));
+      if (req->event_type != ACCEPT) {
+        close(req->client_socket);
+      }
+      io_uring_cqe_seen(&ring, cqe);
+      delete req;
+      continue;
+    }
+
+    switch (req->event_type) {
+      case ACCEPT:
+        spdlog::info("Accepted new connection");
+        add_accept_request(server_socket, &client_addr,
+                           &client_addr_len);
+        add_read_request(cqe->res);
+        break;
+      case READ: {
+        if (cqe->res == 0) {
+          spdlog::info("Client closed connection");
+          close(req->client_socket);
+          break;
+        }
+        spdlog::debug("Read data from client");
+
+        auto* request =
+            reinterpret_cast<GetPageRequest*>(req->iov.iov_base);
+        request->to_host_order();
+
+        if (request->page_number >= Config::page_count) {
+          spdlog::error("Invalid page number: {}", request->page_number);
+          GetPageStatus status = INVALID_PAGE_NUMBER;
+          uint32_t net_status = htonl(status);
+          add_write_request(req->client_socket,
+                            reinterpret_cast<char*>(&net_status),
+                            sizeof(net_status));
+        } else {
+          GetPageStatus status = SUCCESS;
+          uint32_t net_status = htonl(status);
+          size_t response_size = sizeof(net_status) + PAGE_SIZE;
+          char* response_data = static_cast<char*>(malloc(response_size));
+          memcpy(response_data, &net_status, sizeof(net_status));
+          memcpy(response_data + sizeof(net_status),
+                 memory_block.data.data() + request->page_number * PAGE_SIZE,
+                 PAGE_SIZE);
+          add_write_request(req->client_socket, response_data, response_size);
+          free(response_data);
+        }
+        free(req->iov.iov_base);
+        add_read_request(
+            req->client_socket);
+        break;
+      }
+      case WRITE:
+        spdlog::debug("Write complete, keeping connection open");
+        free(req->iov.iov_base);
+        break;
+    }
+
+    io_uring_cqe_seen(&ring, cqe);
+    delete req;
+  }
+}
+
+int main() {
+  Config::load_config();
+
+  MemoryBlock<PAGE_SIZE> memory_block(Config::page_count,
+                                      new PseudoRandomFillingStrategy());
+
+  spdlog::info("Port: {}", Config::port);
+
+  int server_fd;
+  sockaddr_in address{};
+
+  server_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_fd == 0) {
+    spdlog::critical("Socket creation failed");
+    return EXIT_FAILURE;
+  }
+
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = INADDR_ANY;
+  address.sin_port = htons(Config::port);
+
+  if (bind(server_fd, (sockaddr*)&address, sizeof(address)) < 0) {
+    spdlog::critical("Bind failed");
+    return EXIT_FAILURE;
+  }
+
+  if (listen(server_fd, 10) < 0) {
+    spdlog::critical("Listen failed");
+    return EXIT_FAILURE;
+  }
+
+  spdlog::info("Server started. Listening on port {}", Config::port);
+  setup_io_uring();
+  event_loop(server_fd, memory_block);
+  return 0;
+}
