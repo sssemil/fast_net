@@ -52,14 +52,13 @@ void add_read_request(int client_socket) {
   io_uring_submit(&ring);
 }
 
-void add_write_request(int client_socket, const char* data, size_t length) {
+void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
   auto* req = new custom_request{WRITE, client_socket};
-  req->iov.iov_base = malloc(length);
-  memcpy(req->iov.iov_base, data, length);
-  req->iov.iov_len = length;
+  req->iov.iov_base = nullptr;
+  req->iov.iov_len = 0;
 
-  io_uring_prep_writev(sqe, client_socket, &req->iov, 1, 0);
+  io_uring_prep_writev(sqe, client_socket, iovs, iov_count, 0);
   io_uring_sqe_set_data(sqe, req);
   io_uring_submit(&ring);
 }
@@ -88,10 +87,10 @@ void event_loop(int server_socket, const MemoryBlock<PAGE_SIZE>& memory_block) {
     switch (req->event_type) {
       case ACCEPT:
         spdlog::info("Accepted new connection");
-        add_accept_request(server_socket, &client_addr,
-                           &client_addr_len);
+        add_accept_request(server_socket, &client_addr, &client_addr_len);
         add_read_request(cqe->res);
         break;
+
       case READ: {
         if (cqe->res == 0) {
           spdlog::info("Client closed connection");
@@ -100,32 +99,29 @@ void event_loop(int server_socket, const MemoryBlock<PAGE_SIZE>& memory_block) {
         }
         spdlog::debug("Read data from client");
 
-        auto* request =
-            reinterpret_cast<GetPageRequest*>(req->iov.iov_base);
+        auto* request = reinterpret_cast<GetPageRequest*>(req->iov.iov_base);
         request->to_host_order();
 
         if (request->page_number >= Config::page_count) {
           spdlog::error("Invalid page number: {}", request->page_number);
           GetPageStatus status = INVALID_PAGE_NUMBER;
           uint32_t net_status = htonl(status);
-          add_write_request(req->client_socket,
-                            reinterpret_cast<char*>(&net_status),
-                            sizeof(net_status));
+          iovec iov = {&net_status, sizeof(net_status)};
+          add_write_request(req->client_socket, &iov, 1);
         } else {
           GetPageStatus status = SUCCESS;
           uint32_t net_status = htonl(status);
-          size_t response_size = sizeof(net_status) + PAGE_SIZE;
-          char* response_data = static_cast<char*>(malloc(response_size));
-          memcpy(response_data, &net_status, sizeof(net_status));
-          memcpy(response_data + sizeof(net_status),
-                 memory_block.data.data() + request->page_number * PAGE_SIZE,
-                 PAGE_SIZE);
-          add_write_request(req->client_socket, response_data, response_size);
-          free(response_data);
+          iovec iov[2];
+          iov[0].iov_base = &net_status;
+          iov[0].iov_len = sizeof(net_status);
+          iov[1].iov_base = const_cast<uint8_t*>(memory_block.data.data()) +
+                            request->page_number * PAGE_SIZE;
+          iov[1].iov_len = PAGE_SIZE;
+
+          add_write_request(req->client_socket, iov, 2);
         }
         free(req->iov.iov_base);
-        add_read_request(
-            req->client_socket);
+        add_read_request(req->client_socket);
         break;
       }
       case WRITE:
