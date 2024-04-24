@@ -34,6 +34,10 @@ add_executable(server_iou "${PROJECT_SOURCE_DIR}/server_iou.cpp" ${SOURCE_FILES}
 target_include_directories(server_iou PRIVATE ${LIBURING_INCLUDE_DIRS})
 target_link_libraries(server_iou PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> ${LIBURING_LIBRARIES})
 
+add_executable(client_iou "${PROJECT_SOURCE_DIR}/client_iou.cpp" ${SOURCE_FILES} ${HEADER_FILES})
+target_include_directories(client_iou PRIVATE ${LIBURING_INCLUDE_DIRS})
+target_link_libraries(client_iou PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> ${LIBURING_LIBRARIES})
+
 add_custom_target(
         format
         COMMAND find ${CMAKE_SOURCE_DIR} -type f \( -iname "*.h" -o -iname "*.cpp" \) -exec clang-format -i {} +

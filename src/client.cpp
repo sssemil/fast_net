@@ -4,17 +4,20 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <iostream>
+#include <stdexcept>
 
 #include "consts.hpp"
 #include "memory_block.hpp"
 #include "models/get_page.hpp"
 #include "spdlog/spdlog.h"
 #include "static_config.hpp"
+#include "utils.hpp"
 
 int main() {
   Config::load_config();
 
-  const MemoryBlockVerifier<PAGE_SIZE> memory_block_verifier(
+  const MemoryBlockVerifier<PAGE_SIZE> verifier(
       Config::page_count, new PseudoRandomFillingStrategy());
 
   spdlog::info("Port: {}", Config::port);
@@ -42,68 +45,75 @@ int main() {
     return -1;
   }
 
-  // TODO: Consider using a constant seed for reproducibility
   srand(time(nullptr));  // NOLINT(*-msc51-cpp)
   std::chrono::duration<double, std::milli> total_time(0);
 
+  uint32_t correct_responses = 0;
+  uint32_t incorrect_responses = 0;
   GetPageRequest request{};
   GetPageResponse response{};
   for (int i = 0; i < Config::num_requests; ++i) {
     auto start = std::chrono::high_resolution_clock::now();
 
-    const uint32_t page_number =
-        rand() % Config::page_count;  // NOLINT(*-msc50-cpp)
-
-    request.page_number = page_number;
+    request.request_id = i;
+    request.page_number = i % Config::page_count;
     request.to_network_order();
     if (send(sock, &request, sizeof(request), 0) != sizeof(request)) {
-      throw std::runtime_error("Error sending request to server");
+      spdlog::error("Error sending request to server");
+      continue;
     }
 
-    const auto response_ptr = reinterpret_cast<uint8_t*>(&response);
-    ssize_t read_count = 0;
-    size_t read_pass = 0;
-    while (read_count < sizeof(response)) {
-      spdlog::debug("read_count: {} (read pass: {})", read_count, read_pass);
-      read_pass++;
-      const ssize_t curr_read_count =
-          read(sock, response_ptr + read_count, sizeof(response) - read_count);
-      if (curr_read_count < 0) {
-        throw std::runtime_error("Error reading response from server");
+    size_t total_read = 0;
+    auto* response_ptr = reinterpret_cast<uint8_t*>(&response);
+    while (total_read < sizeof(response)) {
+      ssize_t bytes_read =
+          read(sock, response_ptr + total_read, sizeof(response) - total_read);
+      if (bytes_read < 0) {
+        spdlog::error("Error reading response from server");
+        break;
       }
-      if (curr_read_count == 0) {
-        throw std::runtime_error("Connection closed by server");
+      if (bytes_read == 0) {
+        spdlog::error("Connection closed by server");
+        break;
       }
-      read_count += curr_read_count;
+      total_read += bytes_read;
     }
 
-    if (read_count != sizeof(response)) {
-      throw std::runtime_error("Incomplete response received");
+    if (total_read != sizeof(response)) {
+      spdlog::error("Incomplete response received");
+      continue;
     }
 
     response.to_host_order();
 
     if (response.get_status() != SUCCESS) {
-      const auto error_string = std::string("Server reported error ") +
-                                std::to_string(response.get_status()) +
-                                " for page " + std::to_string(page_number);
-      throw std::runtime_error(error_string);
+      spdlog::error("Server reported error {} for page {}",
+                    (uint32_t)response.get_status(),
+                    response.header.page_number);
+      incorrect_responses++;
+      continue;
     }
 
     auto end = std::chrono::high_resolution_clock::now();
     total_time += end - start;
 
-    if (!memory_block_verifier.verify(response.content, page_number)) {
-      throw std::runtime_error("Data verification failed for page " +
-                               std::to_string(page_number));
+    if (verifier.verify(response.content, response.header.page_number)) {
+      spdlog::debug("Verification passed for page {}",
+                    response.header.page_number);
+      correct_responses++;
+    } else {
+      spdlog::error("Verification failed for page {}",
+                    response.header.page_number);
+      incorrect_responses++;
     }
 
     if (i % 1000 == 999) {
       const double millis = total_time.count();
       const double rate = 1000 * ((i + 1) / millis);
-      const double mbps = rate * sizeof(GetPageResponse) * 8 / (1000 * 1000 * 1000);
-      spdlog::info("Processed {}/{} requests [{:03.2f} req/s][{:03.2f} Gb/s]", i + 1,
-                   Config::num_requests, rate, mbps);
+      const double gbps =
+          rate * sizeof(GetPageResponse) * 8 / (1000 * 1000 * 1000);
+      spdlog::info("Processed {}/{} requests [{:03.2f} req/s][{:03.2f} Gb/s]",
+                   i + 1, Config::num_requests, rate, gbps);
     }
   }
 
@@ -112,9 +122,11 @@ int main() {
       total_time_seconds / static_cast<double>(Config::num_requests);
   const double avg_rate =
       static_cast<double>(Config::num_requests) / total_time_seconds;
-  // TODO: Account for the full packet size?
   const double avg_gbps =
       avg_rate * sizeof(GetPageResponse) * 8 / (1000 * 1000 * 1000);
+
+  spdlog::info("Correct responses: {}", correct_responses);
+  spdlog::info("Incorrect responses: {}", incorrect_responses);
   spdlog::info("Average response time for {} requests: {} s",
                Config::num_requests, avg_time);
   spdlog::info("Average rate: {:03.2f} req/s", avg_rate);

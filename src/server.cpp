@@ -22,27 +22,39 @@ void handle_client(const int client_socket,
     }
     request.to_host_order();
 
-    spdlog::debug("Requested page number: {}", request.page_number);
+    spdlog::debug("[{}] Requested page number: {}", request.request_id,
+                  request.page_number);
+
+    GetPageResponse response{};
+    response.header.request_id = request.request_id;
+    response.header.page_number = request.page_number;
 
     if (request.page_number >= Config::page_count) {
       spdlog::error("Invalid page number: {}", request.page_number);
-      constexpr GetPageStatus status = INVALID_PAGE_NUMBER;
-      uint32_t net_status = htonl(status);
-      send(client_socket, &net_status, sizeof(net_status), 0);
-      spdlog::info("Error sent.");
+      response.header.status = INVALID_PAGE_NUMBER;
+      response.header.to_network_order();
+      memset(response.content.data(), 0xFA, response.content.size());
+
+      if (write(client_socket, &response, sizeof(response)) < 0) {
+        spdlog::error("Error sending error response to client");
+      }
+      spdlog::info("Error response sent.");
     } else {
       constexpr GetPageStatus status = SUCCESS;
-      uint32_t net_status = htonl(status);
+      response.header.status = status;
+      response.header.to_network_order();
+
       iovec iov[2];
-      iov[0].iov_base = &net_status;
-      iov[0].iov_len = sizeof(net_status);
+      iov[0].iov_base = &response.header;
+      iov[0].iov_len = sizeof(response.header);
       iov[1].iov_base = const_cast<uint8_t *>(memory_block.data.data()) +
                         request.page_number * PAGE_SIZE;
       iov[1].iov_len = PAGE_SIZE;
+
       if (writev(client_socket, iov, 2) < 0) {
-        spdlog::error("Error sending combined response to client");
+        spdlog::error("Error sending full response to client");
       }
-      spdlog::debug("Data sent.");
+      spdlog::debug("Full data sent.");
     }
   }
   close(client_socket);
