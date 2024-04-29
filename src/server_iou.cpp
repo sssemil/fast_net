@@ -4,7 +4,6 @@
 #include <unistd.h>
 
 #include <cstring>
-#include <numeric>
 
 #include "memory_block.hpp"
 #include "models/get_page.hpp"
@@ -12,7 +11,7 @@
 #include "static_config.hpp"
 #include "utils.hpp"
 
-#define IO_URING_QUEUE_DEPTH 256
+#define IO_URING_QUEUE_DEPTH 4096
 
 struct custom_request {
   int event_type;
@@ -87,11 +86,14 @@ void event_loop(int server_socket, const MemoryBlock<PAGE_SIZE>& memory_block) {
     }
 
     switch (req->event_type) {
-      case ACCEPT:
+      case ACCEPT: {
         spdlog::info("Accepted new connection");
         add_accept_request(server_socket, &client_addr, &client_addr_len);
-        add_read_request(cqe->res);
+        int client_socket = cqe->res;
+        configure_socket_to_not_fragment(client_socket);
+        add_read_request(client_socket);
         break;
+      }
 
       case READ: {
         if (cqe->res == 0) {
@@ -125,7 +127,7 @@ void event_loop(int server_socket, const MemoryBlock<PAGE_SIZE>& memory_block) {
           iovec iov[2];
           iov[0].iov_base = &response.header;
           iov[0].iov_len = sizeof(response.header);
-          iov[1].iov_base = const_cast<uint8_t *>(memory_block.data.data()) +
+          iov[1].iov_base = const_cast<uint8_t*>(memory_block.data.data()) +
                             request->page_number * PAGE_SIZE;
           iov[1].iov_len = PAGE_SIZE;
 
@@ -165,6 +167,8 @@ int main() {
     spdlog::critical("Socket creation failed");
     return EXIT_FAILURE;
   }
+
+  configure_socket_to_not_fragment(server_fd);
 
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = INADDR_ANY;
