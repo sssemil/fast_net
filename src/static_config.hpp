@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -19,15 +20,18 @@ class Config {
     std::ifstream env_file(env_file_path.data());
     std::string line;
 
-    if (!env_file.is_open()) {
-      throw std::runtime_error("Failed to open .env file.");
+    if (env_file.is_open()) {
+      while (std::getline(env_file, line)) {
+        parse_env_line(line);
+      }
+      env_file.close();
     }
 
-    while (std::getline(env_file, line)) {
-      parse_env_line(line);
-    }
-
-    env_file.close();
+    host = get_env_var("HOST", host);
+    port = static_cast<in_port_t>(std::stoul(get_env_var("PORT", std::to_string(port))));
+    num_requests = std::stoul(get_env_var("NUM_REQUESTS", std::to_string(num_requests)));
+    logging_level = get_env_var("LOGGING_LEVEL", logging_level);
+    page_count = std::stoul(get_env_var("PAGE_COUNT", std::to_string(page_count)));
 
     set_logging_level();
 
@@ -71,6 +75,11 @@ class Config {
     }
   }
 
+  static std::string get_env_var(const std::string& key, const std::string& default_value) {
+    const char* value = std::getenv(key.c_str());
+    return value ? value : default_value;
+  }
+
   static void set_logging_level() {
     if (logging_level == "DEBUG") {
       spdlog::set_level(spdlog::level::debug);
@@ -92,8 +101,8 @@ class Config {
   }
 };
 
-std::string Config::host;
-in_port_t Config::port = 0;
-size_t Config::num_requests = 0;
-std::string Config::logging_level = "INFO";
-size_t Config::page_count = 0;
+std::string Config::host = "localhost";
+in_port_t Config::port = 8888;
+size_t Config::num_requests = 10;
+std::string Config::logging_level = "DEBUG";
+size_t Config::page_count = 1024;
