@@ -14,7 +14,7 @@
 struct custom_request {
   int event_type;
   int client_socket;
-  uint8_t* data;
+  struct iovec iov;
 };
 
 enum EventType { ACCEPT, READ, WRITE };
@@ -33,19 +33,22 @@ void add_accept_request(int server_socket, sockaddr_in* client_addr,
 void add_read_request(int client_socket) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
   auto* req = new custom_request{READ, client_socket};
+  req->iov.iov_base = malloc(sizeof(GetPageRequest));
+  req->iov.iov_len = sizeof(GetPageRequest);
 
-  req->data = static_cast<uint8_t*>(malloc(sizeof(GetPageRequest)));
-
-  io_uring_prep_read(sqe, client_socket, req->data, sizeof(GetPageRequest), 0);
+  io_uring_prep_readv(sqe, client_socket, &req->iov, 1, 0);
   io_uring_sqe_set_data(sqe, req);
 }
 
 void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
   auto* req = new custom_request{WRITE, client_socket};
+  req->iov.iov_base = nullptr;
+  req->iov.iov_len = 0;
 
   io_uring_prep_writev(sqe, client_socket, iovs, iov_count, 0);
   io_uring_sqe_set_data(sqe, req);
+  io_uring_submit(&ring);
 }
 
 [[noreturn]] void event_loop(int server_socket, const MemoryBlock<PAGE_SIZE>& memory_block) {
@@ -54,9 +57,6 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
 
   add_accept_request(server_socket, &client_addr, &client_addr_len);
   io_uring_submit(&ring);
-
-  auto* empty_page = malloc(PAGE_SIZE);
-  memset(empty_page, 0xFA, PAGE_SIZE);
 
   while (true) {
     struct io_uring_cqe* cqe;
@@ -94,33 +94,30 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
         }
         spdlog::debug("Read data from client");
 
-        auto* request = reinterpret_cast<GetPageRequest*>(req->data);
+        auto* request = reinterpret_cast<GetPageRequest*>(req->iov.iov_base);
         request->to_host_order();
         spdlog::debug("Requested page number: {}", request->page_number);
 
-        auto* response = new GetPageResponseHeader();
-        response->request_id = request->request_id;
-        response->page_number = request->page_number;
+        GetPageResponse response{};
+        response.header.request_id = request->request_id;
+        response.header.page_number = request->page_number;
         if (request->page_number >= Config::page_count) {
           spdlog::error("Invalid page number: {0:#x}", request->page_number);
-          response->status = INVALID_PAGE_NUMBER;
-          response->to_network_order();
-
-          iovec iov[2];
+          response.header.status = INVALID_PAGE_NUMBER;
+          response.header.to_network_order();
+          memset(response.content.data(), 0xFA, response.content.size());
+          iovec iov[1];
           iov[0].iov_base = &response;
-          iov[0].iov_len = sizeof(GetPageResponse);
-          iov[1].iov_base = empty_page;
-          iov[1].iov_len = PAGE_SIZE;
-
-          add_write_request(req->client_socket, iov, 2);
+          iov[0].iov_len = sizeof(response);
+          add_write_request(req->client_socket, iov, 1);
         } else {
           constexpr GetPageStatus status = SUCCESS;
-          response->status = status;
-          response->to_network_order();
+          response.header.status = status;
+          response.header.to_network_order();
 
           iovec iov[2];
-          iov[0].iov_base = &response;
-          iov[0].iov_len = sizeof(GetPageResponseHeader);
+          iov[0].iov_base = &response.header;
+          iov[0].iov_len = sizeof(response.header);
           iov[1].iov_base = const_cast<uint8_t*>(memory_block.data.data()) +
                             request->page_number * PAGE_SIZE;
           iov[1].iov_len = PAGE_SIZE;
@@ -130,14 +127,14 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
           debug_print_array(static_cast<uint8_t*>(iov[1].iov_base),
                             iov[1].iov_len);
         }
-        free(req->data);
+        free(req->iov.iov_base);
         add_read_request(req->client_socket);
         io_uring_submit(&ring);
         break;
       }
       case WRITE:
         spdlog::debug("Write complete, keeping connection open");
-        free(req->data);
+        free(req->iov.iov_base);
         break;
     }
 
