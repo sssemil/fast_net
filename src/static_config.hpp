@@ -15,6 +15,7 @@ class Config {
   static size_t num_requests;
   static std::string logging_level;
   static size_t page_count;
+  static size_t client_threads;
 
   static void load_config(const std::string& env_file_path) {
     std::ifstream env_file(env_file_path.data());
@@ -32,6 +33,7 @@ class Config {
     num_requests = std::stoul(get_env_var("NUM_REQUESTS", std::to_string(num_requests)));
     logging_level = get_env_var("LOGGING_LEVEL", logging_level);
     page_count = std::stoul(get_env_var("PAGE_COUNT", std::to_string(page_count)));
+    client_threads = std::stoul(get_env_var("CLIENT_THREADS", std::to_string(client_threads)));
 
     set_logging_level();
 
@@ -69,6 +71,8 @@ class Config {
         logging_level = value;
       } else if (key == "PAGE_COUNT") {
         page_count = std::stoul(value);
+      } else if (key == "CLIENT_THREADS") {
+        client_threads = std::stoul(value);
       } else {
         spdlog::warn("Unknown key '{}'.", key);
       }
@@ -106,3 +110,4 @@ in_port_t Config::port = 8888;
 size_t Config::num_requests = 10;
 std::string Config::logging_level = "DEBUG";
 size_t Config::page_count = 1024;
+size_t Config::client_threads = 4;
