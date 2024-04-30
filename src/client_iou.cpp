@@ -50,8 +50,9 @@ int setup_socket(const char* addr, int port) {
   return sock;
 }
 
-void send_requests(struct io_uring& ring, int sock, std::vector<GetPageRequest>& requests,
-                   size_t start, size_t end) {
+void send_requests(struct io_uring& ring, int sock,
+                   std::vector<GetPageRequest>& requests, size_t start,
+                   size_t end) {
   for (size_t j = start; j < end; j++) {
     spdlog::debug("Creating request {} {}", start, j);
     uint32_t request_id = j;
@@ -70,8 +71,9 @@ void send_requests(struct io_uring& ring, int sock, std::vector<GetPageRequest>&
   io_uring_submit(&ring);
 }
 
-void receive_responses(struct io_uring& ring, int sock, std::vector<GetPageResponse*>& responses,
-                       size_t start, size_t end) {
+void receive_responses(struct io_uring& ring, int sock,
+                       std::vector<GetPageResponse*>& responses, size_t start,
+                       size_t end) {
   size_t num_responses = end - start;
 
   for (size_t j = start; j < end; j++) {
@@ -128,19 +130,32 @@ void verify_responses(std::vector<GetPageResponse*>& responses,
   }
 }
 
+void client_thread(const char* addr, int port, size_t start, size_t end,
+                   std::vector<GetPageRequest>& requests,
+                   std::vector<GetPageResponse*>& responses) {
+  struct io_uring ring {};
+  setup_io_uring(ring);
+
+  int sock = setup_socket(addr, port);
+  if (sock < 0) return;
+
+  for (size_t i = start; i < end; i += BATCH_SIZE) {
+    size_t batch_end = std::min(end, i + BATCH_SIZE);
+    send_requests(ring, sock, requests, i, batch_end);
+    receive_responses(ring, sock, responses, i, batch_end);
+  }
+
+  close(sock);
+  io_uring_queue_exit(&ring);
+}
+
 int main() {
   Config::load_config();
   MemoryBlockVerifier<PAGE_SIZE> verifier(Config::page_count,
                                           new PseudoRandomFillingStrategy());
 
-  struct io_uring ring{};
-  setup_io_uring(ring);
-
-  int sock = setup_socket(Config::host.c_str(), Config::port);
-  if (sock < 0) return -1;
-
   srand(time(nullptr));  // NOLINT(*-msc51-cpp)
-  auto start = std::chrono::high_resolution_clock::now();
+  auto start_time = std::chrono::high_resolution_clock::now();
 
   size_t num_requests = Config::num_requests;
   uint32_t correct_responses = 0;
@@ -152,19 +167,27 @@ int main() {
     responses[i] = new GetPageResponse();
   }
 
-  for (size_t i = 0; i < num_requests; i += BATCH_SIZE) {
-    size_t end = std::min(num_requests, i + BATCH_SIZE);
-    send_requests(ring, sock, requests, i, end);
-    receive_responses(ring, sock, responses, i, end);
+  std::vector<std::thread> threads;
+  size_t requests_per_thread = num_requests / Config::client_threads;
+  for (size_t i = 0; i < Config::client_threads; i++) {
+    size_t start = i * requests_per_thread;
+    size_t end = (i == Config::client_threads - 1)
+                     ? num_requests
+                     : (i + 1) * requests_per_thread;
+    spdlog::info("Starting thread {} for range {} {}", i, start, end);
+    threads.emplace_back(client_thread, Config::host.c_str(), Config::port,
+                         start, end, std::ref(requests), std::ref(responses));
   }
 
-  close(sock);
-  io_uring_queue_exit(&ring);
+  for (auto& thread : threads) {
+    thread.join();
+  }
 
-  double total_time = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                          std::chrono::high_resolution_clock::now() - start)
-                          .count() /
-                      1000000000.0;
+  double total_time =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::high_resolution_clock::now() - start_time)
+          .count() /
+      1000000000.0;
   const double avg_rate =
       static_cast<double>(Config::num_requests) / total_time;
   double avg_time = total_time / static_cast<double>(Config::num_requests);
