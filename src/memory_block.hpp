@@ -28,7 +28,8 @@ class PseudoRandomFillingStrategy final : public IFillingStrategy {
       : seed(seed) {}
 
   [[nodiscard]] uint8_t get_value_at(const size_t index) const override {
-    return static_cast<uint8_t>((index * 2654435761u + seed) % 256);
+//    return static_cast<uint8_t>((index * 2654435761u + seed) % 256);
+    return 0xAA;
   }
 };
 

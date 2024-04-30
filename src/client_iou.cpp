@@ -16,8 +16,7 @@
 #include "static_config.hpp"
 #include "utils.hpp"
 
-#define IO_URING_QUEUE_DEPTH 4096
-#define BATCH_SIZE 16
+#define BATCH_SIZE 64
 
 struct custom_request {
   int event_type;
@@ -26,13 +25,6 @@ struct custom_request {
 enum EventType { SEND, RECEIVE };
 
 struct io_uring ring;
-
-void setup_io_uring() {
-  if (io_uring_queue_init(IO_URING_QUEUE_DEPTH, &ring, 0) < 0) {
-    spdlog::critical("Failed to initialize io_uring");
-    exit(1);
-  }
-}
 
 int setup_socket(const char* addr, int port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -142,12 +134,12 @@ int main() {
   Config::load_config();
   MemoryBlockVerifier<PAGE_SIZE> verifier(Config::page_count,
                                           new PseudoRandomFillingStrategy());
-  setup_io_uring();
+  setup_io_uring(ring);
 
   int sock = setup_socket("127.0.0.1", Config::port);
   if (sock < 0) return -1;
 
-  srand(time(nullptr)); // NOLINT(*-msc51-cpp)
+  srand(time(nullptr));  // NOLINT(*-msc51-cpp)
   auto start = std::chrono::high_resolution_clock::now();
 
   size_t num_requests = Config::num_requests;
@@ -173,9 +165,9 @@ int main() {
   close(sock);
   io_uring_queue_exit(&ring);
 
-  double total_time = std::chrono::duration_cast<std::chrono::seconds>(
+  double total_time = std::chrono::duration_cast<std::chrono::nanoseconds>(
                           std::chrono::high_resolution_clock::now() - start)
-                          .count();
+                          .count() / 1000000000.0;
   const double avg_rate =
       static_cast<double>(Config::num_requests) / total_time;
   double avg_time = total_time / static_cast<double>(Config::num_requests);

@@ -35,3 +35,17 @@ void configure_socket_to_not_fragment(int socket) {
   int one = 1;
   setsockopt(socket, SOL_TCP, TCP_NODELAY, &one, sizeof(one));
 }
+
+#define IO_URING_QUEUE_DEPTH 512
+
+void setup_io_uring(struct io_uring& ring) {
+  struct io_uring_params params {};
+  memset(&params, 0, sizeof(params));
+  params.flags = IORING_SETUP_SQPOLL | IORING_SETUP_SUBMIT_ALL;
+  params.sq_thread_idle = 10000;
+
+  if (io_uring_queue_init_params(IO_URING_QUEUE_DEPTH, &ring, &params) < 0) {
+    spdlog::critical("Failed to initialize io_uring");
+    exit(1);
+  }
+}
