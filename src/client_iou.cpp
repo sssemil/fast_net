@@ -24,8 +24,6 @@ struct custom_request {
 
 enum EventType { SEND, RECEIVE };
 
-struct io_uring ring;
-
 int setup_socket(const char* addr, int port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
@@ -52,7 +50,7 @@ int setup_socket(const char* addr, int port) {
   return sock;
 }
 
-void send_requests(int sock, std::vector<GetPageRequest>& requests,
+void send_requests(struct io_uring& ring, int sock, std::vector<GetPageRequest>& requests,
                    size_t start, size_t end) {
   for (size_t j = start; j < end; j++) {
     spdlog::debug("Creating request {} {}", start, j);
@@ -72,7 +70,7 @@ void send_requests(int sock, std::vector<GetPageRequest>& requests,
   io_uring_submit(&ring);
 }
 
-void receive_responses(int sock, std::vector<GetPageResponse*>& responses,
+void receive_responses(struct io_uring& ring, int sock, std::vector<GetPageResponse*>& responses,
                        size_t start, size_t end) {
   size_t num_responses = end - start;
 
@@ -134,6 +132,8 @@ int main() {
   Config::load_config();
   MemoryBlockVerifier<PAGE_SIZE> verifier(Config::page_count,
                                           new PseudoRandomFillingStrategy());
+
+  struct io_uring ring{};
   setup_io_uring(ring);
 
   int sock = setup_socket(Config::host.c_str(), Config::port);
@@ -154,8 +154,8 @@ int main() {
 
   for (size_t i = 0; i < num_requests; i += BATCH_SIZE) {
     size_t end = std::min(num_requests, i + BATCH_SIZE);
-    send_requests(sock, requests, i, end);
-    receive_responses(sock, responses, i, end);
+    send_requests(ring, sock, requests, i, end);
+    receive_responses(ring, sock, responses, i, end);
   }
 
   close(sock);
