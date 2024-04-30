@@ -9,6 +9,7 @@
 
 class Config {
  public:
+  static std::string host;
   static in_port_t port;
   static size_t num_requests;
   static std::string logging_level;
@@ -54,7 +55,9 @@ class Config {
       const std::string key = trim(line.substr(0, delimiter_pos));
       const std::string value = trim(line.substr(delimiter_pos + 1));
 
-      if (key == "PORT") {
+      if (key == "HOST") {
+        host = value;
+      } else if (key == "PORT") {
         port = static_cast<in_port_t>(std::stoul(value));
       } else if (key == "NUM_REQUESTS") {
         num_requests = std::stoul(value);
@@ -89,6 +92,7 @@ class Config {
   }
 };
 
+std::string Config::host;
 in_port_t Config::port = 0;
 size_t Config::num_requests = 0;
 std::string Config::logging_level = "INFO";

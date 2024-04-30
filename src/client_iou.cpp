@@ -136,7 +136,7 @@ int main() {
                                           new PseudoRandomFillingStrategy());
   setup_io_uring(ring);
 
-  int sock = setup_socket("127.0.0.1", Config::port);
+  int sock = setup_socket(Config::host.c_str(), Config::port);
   if (sock < 0) return -1;
 
   srand(time(nullptr));  // NOLINT(*-msc51-cpp)
@@ -158,22 +158,22 @@ int main() {
     receive_responses(sock, responses, i, end);
   }
 
-  spdlog::info("======================================");
-
-  verify_responses(responses, verifier, correct_responses, incorrect_responses);
-
   close(sock);
   io_uring_queue_exit(&ring);
 
   double total_time = std::chrono::duration_cast<std::chrono::nanoseconds>(
                           std::chrono::high_resolution_clock::now() - start)
-                          .count() / 1000000000.0;
+                          .count() /
+                      1000000000.0;
   const double avg_rate =
       static_cast<double>(Config::num_requests) / total_time;
   double avg_time = total_time / static_cast<double>(Config::num_requests);
   const double avg_gbps =
       avg_rate * sizeof(GetPageResponse) * 8 / (1000 * 1000 * 1000);
 
+  verify_responses(responses, verifier, correct_responses, incorrect_responses);
+
+  spdlog::info("======================================");
   spdlog::info("Correct responses: {}", correct_responses);
   spdlog::info("Incorrect responses: {}", incorrect_responses);
   spdlog::info("Total time for {} requests: {:.2f} s", Config::num_requests,
@@ -181,6 +181,7 @@ int main() {
   spdlog::info("Average time per request: {:.2f} s", avg_time);
   spdlog::info("Average rate: {:03.2f} req/s", avg_rate);
   spdlog::info("Average throughput: {:03.2f} Gb/s", avg_gbps);
+  spdlog::info("======================================");
 
   return 0;
 }
