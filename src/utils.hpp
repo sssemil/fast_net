@@ -41,7 +41,7 @@ void configure_socket_to_not_fragment(int socket) {
 void setup_io_uring(struct io_uring& ring) {
   struct io_uring_params params {};
   memset(&params, 0, sizeof(params));
-  params.flags = IORING_SETUP_SQPOLL | IORING_SETUP_SUBMIT_ALL;
+  params.flags = IORING_SETUP_SQPOLL;
   params.sq_thread_idle = 10000;
 
   int r = io_uring_queue_init_params(IO_URING_QUEUE_DEPTH, &ring, &params);
