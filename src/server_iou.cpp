@@ -13,26 +13,14 @@
 
 struct custom_request {
   int event_type;
-  int client_socket;
   struct iovec iov;
 };
 
-enum EventType { ACCEPT, READ, WRITE };
+enum EventType { READ, WRITE };
 
-struct io_uring ring;
-
-void add_accept_request(int server_socket, sockaddr_in* client_addr,
-                        socklen_t* client_addr_len) {
+void add_read_request(struct io_uring& ring, int client_socket) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new custom_request{ACCEPT, server_socket};
-  io_uring_prep_accept(sqe, server_socket, (sockaddr*)client_addr,
-                       client_addr_len, 0);
-  io_uring_sqe_set_data(sqe, req);
-}
-
-void add_read_request(int client_socket) {
-  struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new custom_request{READ, client_socket};
+  auto* req = new custom_request{READ};
   req->iov.iov_base = malloc(sizeof(GetPageRequest));
   req->iov.iov_len = sizeof(GetPageRequest);
 
@@ -40,9 +28,10 @@ void add_read_request(int client_socket) {
   io_uring_sqe_set_data(sqe, req);
 }
 
-void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
+void add_write_request(struct io_uring& ring, int client_socket,
+                       const iovec* iovs, int iov_count) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new custom_request{WRITE, client_socket};
+  auto* req = new custom_request{WRITE};
   req->iov.iov_base = nullptr;
   req->iov.iov_len = 0;
 
@@ -51,11 +40,12 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
   io_uring_submit(&ring);
 }
 
-[[noreturn]] void event_loop(int server_socket, const MemoryBlock<PAGE_SIZE>& memory_block) {
-  struct sockaddr_in client_addr {};
-  socklen_t client_addr_len = sizeof(client_addr);
-
-  add_accept_request(server_socket, &client_addr, &client_addr_len);
+void event_loop(struct io_uring& ring, int client_socket,
+                const MemoryBlock<PAGE_SIZE>& memory_block) {
+  configure_socket_to_not_fragment(client_socket);
+  for (int i = 0; i < 64; i++) {
+    add_read_request(ring, client_socket);
+  }
   io_uring_submit(&ring);
 
   while (true) {
@@ -63,34 +53,12 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
     io_uring_wait_cqe(&ring, &cqe);
     auto* req = (custom_request*)io_uring_cqe_get_data(cqe);
 
-    if (cqe->res < 0) {
-      spdlog::error("IO operation failed: {}", strerror(-cqe->res));
-      if (req->event_type != ACCEPT) {
-        close(req->client_socket);
-      }
-      io_uring_cqe_seen(&ring, cqe);
-      delete req;
-      continue;
-    }
-
     switch (req->event_type) {
-      case ACCEPT: {
-        spdlog::info("Accepted new connection");
-        add_accept_request(server_socket, &client_addr, &client_addr_len);
-        int client_socket = cqe->res;
-        configure_socket_to_not_fragment(client_socket);
-        for (int i = 0; i < 64; i++) {
-          add_read_request(client_socket);
-        }
-        io_uring_submit(&ring);
-        break;
-      }
-
       case READ: {
         if (cqe->res == 0) {
           spdlog::info("Client closed connection");
-          close(req->client_socket);
-          break;
+          close(client_socket);
+          return;
         }
         spdlog::debug("Read data from client");
 
@@ -109,7 +77,7 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
           iovec iov[1];
           iov[0].iov_base = &response;
           iov[0].iov_len = sizeof(response);
-          add_write_request(req->client_socket, iov, 1);
+          add_write_request(ring, client_socket, iov, 1);
         } else {
           constexpr GetPageStatus status = SUCCESS;
           response.header.status = status;
@@ -122,13 +90,13 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
                             request->page_number * PAGE_SIZE;
           iov[1].iov_len = PAGE_SIZE;
 
-          add_write_request(req->client_socket, iov, 2);
+          add_write_request(ring, client_socket, iov, 2);
 
           debug_print_array(static_cast<uint8_t*>(iov[1].iov_base),
                             iov[1].iov_len);
         }
         free(req->iov.iov_base);
-        add_read_request(req->client_socket);
+        add_read_request(ring, client_socket);
         io_uring_submit(&ring);
         break;
       }
@@ -143,6 +111,15 @@ void add_write_request(int client_socket, const iovec* iovs, int iov_count) {
   }
 }
 
+void handle_client(const int client_socket,
+                   const MemoryBlock<PAGE_SIZE>& memory_block) {
+  spdlog::info("Handling a new client");
+  struct io_uring ring {};
+  setup_io_uring(ring);
+  event_loop(ring, client_socket, memory_block);
+  io_uring_queue_exit(&ring);
+}
+
 int main() {
   Config::load_config();
 
@@ -153,31 +130,40 @@ int main() {
 
   int server_fd;
   sockaddr_in address{};
+  int addr_len = sizeof(address);
 
-  server_fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (server_fd == 0) {
-    spdlog::critical("Socket creation failed");
-    return EXIT_FAILURE;
+  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+    spdlog::critical("socket failed");
+    exit(EXIT_FAILURE);
   }
-
-  configure_socket_to_not_fragment(server_fd);
 
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = INADDR_ANY;
   address.sin_port = htons(Config::port);
 
-  if (bind(server_fd, (sockaddr*)&address, sizeof(address)) < 0) {
-    spdlog::critical("Bind failed");
-    return EXIT_FAILURE;
+  if (bind(server_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) <
+      0) {
+    spdlog::critical("bind failed");
+    exit(EXIT_FAILURE);
   }
 
-  if (listen(server_fd, 10) < 0) {
-    spdlog::critical("Listen failed");
-    return EXIT_FAILURE;
+  if (listen(server_fd, MAX_QUEUE) < 0) {
+    spdlog::critical("listen");
+    exit(EXIT_FAILURE);
   }
 
   spdlog::info("Server started. Listening on port {}", Config::port);
-  setup_io_uring(ring);
-  event_loop(server_fd, memory_block);
-  return 0;
+
+  while (true) {
+    int new_socket;
+    if ((new_socket = accept(server_fd, reinterpret_cast<sockaddr*>(&address),
+                             reinterpret_cast<socklen_t*>(&addr_len))) < 0) {
+      spdlog::critical("accept");
+      exit(EXIT_FAILURE);
+    }
+
+    std::thread client_thread(handle_client, new_socket,
+                              std::ref(memory_block));
+    client_thread.detach();
+  }
 }
