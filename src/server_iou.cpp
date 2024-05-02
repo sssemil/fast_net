@@ -10,6 +10,7 @@
 #include "spdlog/spdlog.h"
 #include "static_config.hpp"
 #include "utils.hpp"
+#include "io_uring_utils.hpp"
 
 struct custom_request {
   int event_type;

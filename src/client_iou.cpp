@@ -15,6 +15,7 @@
 #include "spdlog/spdlog.h"
 #include "static_config.hpp"
 #include "utils.hpp"
+#include "io_uring_utils.hpp"
 
 #define BATCH_SIZE 64
 
@@ -97,6 +98,10 @@ void receive_responses(struct io_uring& ring, int sock,
     if (req->event_type == SEND) {
       spdlog::debug("Sent request {}", j);
       j--;
+    }
+    if (((req->event_type == SEND && cqe->res == 140)
+        || (req->event_type == RECEIVE && cqe->res == 8))) {
+      spdlog::debug("CQE->RES {} ({})", cqe->res, req->event_type);
     }
     if (cqe->res < 0) {
       spdlog::error("IO operation failed: {}", strerror(-cqe->res));
