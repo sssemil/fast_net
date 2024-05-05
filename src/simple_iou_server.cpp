@@ -9,11 +9,14 @@
 #include <thread>
 #include <vector>
 
-#define PAGE_SIZE 512
+#define PAGE_SIZE 32
 #define PORT 12345
 #define RING_SIZE 4096
+#define BATCH_SIZE 64
+#define N (64 * 1024)
+#define NUM_REQUESTS (N - (N % BATCH_SIZE))
 
-struct custom_request {
+struct RequestData {
   int event_type;
   uint32_t* data;
 };
@@ -22,7 +25,7 @@ enum EventType { READ_EVENT = 0xAA, WRITE_EVENT = 0xBB };
 
 void add_read_request(struct io_uring& ring, int client_socket) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new custom_request{READ_EVENT};
+  auto* req = new RequestData{READ_EVENT};
   req->data = new uint32_t;
 
   io_uring_prep_read(sqe, client_socket, req->data, sizeof(uint32_t), 0);
@@ -32,7 +35,7 @@ void add_read_request(struct io_uring& ring, int client_socket) {
 void add_write_request(struct io_uring& ring, int client_socket,
                        uint32_t* data) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new custom_request{WRITE_EVENT};
+  auto* req = new RequestData{WRITE_EVENT};
 
   io_uring_prep_write(sqe, client_socket, data, PAGE_SIZE * sizeof(uint32_t),
                       0);
@@ -48,7 +51,7 @@ void event_loop(struct io_uring& ring, int client_socket) {
   while (true) {
     struct io_uring_cqe* cqe;
     io_uring_wait_cqe(&ring, &cqe);
-    auto* req = (custom_request*)io_uring_cqe_get_data(cqe);
+    auto* req = (RequestData*)io_uring_cqe_get_data(cqe);
     if (!req) {
       std::cout << "Request is null" << std::endl;
       exit(EXIT_FAILURE);
@@ -61,11 +64,12 @@ void event_loop(struct io_uring& ring, int client_socket) {
           close(client_socket);
           return;
         }
-        std::cout << "Received page request" << std::endl;
 
         uint32_t page_number;
         memcpy(&page_number, req->data, sizeof(uint32_t));
-        std::cout << "Requested page number: " << page_number << std::endl;
+        if (page_number > NUM_REQUESTS) {
+          std::cout << "Requested page number: " << page_number << std::endl;
+        }
 
         auto* response =
             static_cast<uint32_t*>(malloc(PAGE_SIZE * sizeof(uint32_t)));
@@ -79,7 +83,8 @@ void event_loop(struct io_uring& ring, int client_socket) {
         break;
       }
       case WRITE_EVENT:
-//        std::cout << "Write complete, keeping connection open" << std::endl;
+        //        std::cout << "Write complete, keeping connection open" <<
+        //        std::endl;
         free(req->data);
         break;
       default:

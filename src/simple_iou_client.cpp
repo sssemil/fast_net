@@ -9,12 +9,14 @@
 #include <iostream>
 #include <vector>
 
-#define PAGE_SIZE 512
+#define PAGE_SIZE 32
 #define PORT 12345
 #define SERVER_ADDR "127.0.0.1"
-#define BATCH_SIZE 64
-#define NUM_REQUESTS (10000 - (10000 % BATCH_SIZE))
-#define RING_SIZE 4096
+#define BATCH_SIZE (64*8)
+#define N (64 * 1024)
+#define NUM_REQUESTS (N - (N % BATCH_SIZE))
+#define RING_SIZE 8192
+#define VERIFY 1
 
 enum EventType { SEND_EVENT, RECV_EVENT };
 
@@ -52,45 +54,32 @@ void send_receive_data(int sock) {
     exit(EXIT_FAILURE);
   }
 
-  std::vector<int32_t> send_buffer(NUM_REQUESTS);
-  for (int i = 0; i < NUM_REQUESTS; ++i) {
-    send_buffer[i] = i;
-  }
-
-  std::vector<int32_t> recv_buffer(PAGE_SIZE * NUM_REQUESTS, 0);
-  std::vector<RequestData> request_data_send(NUM_REQUESTS);
-  std::vector<RequestData> request_data_recv(NUM_REQUESTS);
   int correct_responses = 0;
   int incorrect_responses = 0;
 
   int iterations_received = 0;
+
   auto start = std::chrono::high_resolution_clock::now();
 
   for (int send_index = 0; send_index < NUM_REQUESTS;
        send_index += BATCH_SIZE) {
     for (int batch_index = 0; batch_index < BATCH_SIZE; ++batch_index) {
+      auto* send_buffer = new int32_t(send_index + batch_index);
       struct io_uring_sqe* sqe_send = io_uring_get_sqe(&ring);
-      io_uring_prep_send(sqe_send, sock,
-                         &send_buffer.at(send_index + batch_index),
-                         sizeof(int32_t), 0);
-      io_uring_sqe_set_data(sqe_send,
-                            &request_data_send.at(send_index + batch_index));
-      request_data_send.at(send_index + batch_index).event_type = SEND_EVENT;
-      request_data_send.at(send_index + batch_index).buffer =
-          &send_buffer.at(send_index + batch_index);
+      io_uring_prep_send(sqe_send, sock, send_buffer, sizeof(int32_t), 0);
+
+      auto* request_data_send = new RequestData{SEND_EVENT, send_buffer};
+      io_uring_sqe_set_data(sqe_send, request_data_send);
     }
 
     for (int batch_index = 0; batch_index < BATCH_SIZE; ++batch_index) {
+      auto* recv_buffer = new int32_t[PAGE_SIZE];
       struct io_uring_sqe* sqe_recv = io_uring_get_sqe(&ring);
-      io_uring_prep_recv(
-          sqe_recv, sock,
-          &recv_buffer.at((send_index + batch_index) * PAGE_SIZE),
-          PAGE_SIZE * sizeof(int32_t), 0);
-      io_uring_sqe_set_data(sqe_recv,
-                            &request_data_recv.at(send_index + batch_index));
-      request_data_recv.at(send_index + batch_index).event_type = RECV_EVENT;
-      request_data_recv.at(send_index + batch_index).buffer =
-          &recv_buffer.at((send_index + batch_index) * PAGE_SIZE);
+      io_uring_prep_recv(sqe_recv, sock, recv_buffer,
+                         PAGE_SIZE * sizeof(int32_t), 0);
+
+      auto* request_data_recv = new RequestData{RECV_EVENT, recv_buffer};
+      io_uring_sqe_set_data(sqe_recv, request_data_recv);
     }
 
     io_uring_submit(&ring);
@@ -108,45 +97,41 @@ void send_receive_data(int sock) {
         }
       } else if (data->event_type == RECV_EVENT) {
         iterations_received++;
+        if (iterations_received % 1000 == 0) {
+          auto iter_per_second =
+              iterations_received /
+              std::chrono::duration<double>(
+                  std::chrono::high_resolution_clock::now() - start)
+                  .count();
+          std::cout << "Iterations received: " << iterations_received << " ["
+                    << iter_per_second << " it/s]" << std::endl;
+        }
+
+#if VERIFY
+        // Validate response
+        bool correct = true;
+        int32_t first = data->buffer[0];
+        for (int j = 0; j < PAGE_SIZE; ++j) {
+          if (data->buffer[j] != first) {
+            std::cout << "Incorrect response at index "
+                      << iterations_received - 1 << ", value "
+                      << data->buffer[j] << std::endl;
+            correct = false;
+            break;
+          }
+        }
+        if (correct) {
+          correct_responses++;
+        } else {
+          incorrect_responses++;
+        }
+#endif
       }
+
+      delete[] data->buffer;
+      delete data;
 
       io_uring_cqe_seen(&ring, cqe);
-      if (iterations_received % 1000 == 0) {
-        auto iter_per_second =
-            iterations_received /
-            std::chrono::duration<double>(
-                std::chrono::high_resolution_clock::now() - start)
-                .count();
-        std::cout << "Iterations received: " << iterations_received << " ["
-                  << iter_per_second << " it/s]" << std::endl;
-      }
-    }
-  }
-
-  // validate all by checking if numbers in the same buffer are the same
-  std::vector<bool> found_indices(NUM_REQUESTS, false);
-  for (int i = 0; i < NUM_REQUESTS; ++i) {
-    auto first = recv_buffer.at(i * PAGE_SIZE);
-    bool correct = true;
-    if (first < 0 || first >= NUM_REQUESTS) {
-      std::cout << "Invalid index: " << first << std::endl;
-      correct = false;
-    } else if (found_indices.at(first)) {
-      std::cout << "Duplicate index: " << first << std::endl;
-      correct = false;
-    }
-    for (int j = 0; j < PAGE_SIZE && correct; ++j) {
-      if (recv_buffer.at(i * PAGE_SIZE + j) != first) {
-        std::cout << "Incorrect response at index " << i << ", value "
-                  << recv_buffer.at(i * PAGE_SIZE + j) << std::endl;
-        correct = false;
-      }
-    }
-    if (correct) {
-      correct_responses++;
-      found_indices.at(first) = true;
-    } else {
-      incorrect_responses++;
     }
   }
 
