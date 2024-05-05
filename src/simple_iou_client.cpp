@@ -1,22 +1,17 @@
 #include <arpa/inet.h>
 #include <liburing.h>
 #include <netinet/in.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <iostream>
 #include <vector>
 
-#define PAGE_SIZE 32
-#define PORT 12345
-#define SERVER_ADDR "127.0.0.1"
-#define BATCH_SIZE (64*8)
-#define N (64 * 1024)
-#define NUM_REQUESTS (N - (N % BATCH_SIZE))
-#define RING_SIZE 8192
-#define VERIFY 1
+#include "simple_consts.hpp"
 
 enum EventType { SEND_EVENT, RECV_EVENT };
 
@@ -48,45 +43,78 @@ int setup_socket() {
 
 void send_receive_data(int sock) {
   struct io_uring ring {};
-  int r = io_uring_queue_init(RING_SIZE, &ring, 0);
+  int r = io_uring_queue_init(RING_SIZE, &ring, IORING_SETUP_SINGLE_ISSUER);
   if (r < 0) {
     std::cout << "io_uring_queue_init failed: " << strerror(-r) << std::endl;
     exit(EXIT_FAILURE);
   }
 
+#if VERIFY
   int correct_responses = 0;
   int incorrect_responses = 0;
+  bool received[NUM_REQUESTS] = {false};
+#endif
 
   int iterations_received = 0;
 
   auto start = std::chrono::high_resolution_clock::now();
 
-  for (int send_index = 0; send_index < NUM_REQUESTS;
-       send_index += BATCH_SIZE) {
-    for (int batch_index = 0; batch_index < BATCH_SIZE; ++batch_index) {
-      auto* send_buffer = new int32_t(send_index + batch_index);
+  int send_index = 0;
+  int recv_index = 0;
+
+  while (send_index < NUM_REQUESTS || recv_index < NUM_REQUESTS ||
+         iterations_received < NUM_REQUESTS) {
+    //    std::cout << "Send index: " << send_index << ", recv index: " <<
+    //    recv_index
+    //              << ", iterations received: " << iterations_received <<
+    //              std::endl;
+    // Submit send requests
+    auto send_index_pre = send_index;
+    while (send_index < NUM_REQUESTS &&
+           send_index - recv_index < RING_SIZE / 4) {
+      auto* send_buffer = new int32_t(send_index);
       struct io_uring_sqe* sqe_send = io_uring_get_sqe(&ring);
       io_uring_prep_send(sqe_send, sock, send_buffer, sizeof(int32_t), 0);
 
       auto* request_data_send = new RequestData{SEND_EVENT, send_buffer};
       io_uring_sqe_set_data(sqe_send, request_data_send);
-    }
 
-    for (int batch_index = 0; batch_index < BATCH_SIZE; ++batch_index) {
+      send_index++;
+    }
+    auto send_index_diff = send_index - send_index_pre;
+    //    std::cout << "Send index: " << send_index << " (diff: " <<
+    //    send_index_diff
+    //              << ")" << std::endl;
+
+    // Submit receive requests
+    auto recv_index_pre = recv_index;
+    while (recv_index < send_index &&
+           recv_index - iterations_received < RING_SIZE / 4) {
       auto* recv_buffer = new int32_t[PAGE_SIZE];
       struct io_uring_sqe* sqe_recv = io_uring_get_sqe(&ring);
       io_uring_prep_recv(sqe_recv, sock, recv_buffer,
-                         PAGE_SIZE * sizeof(int32_t), 0);
+                         PAGE_SIZE * sizeof(int32_t), MSG_WAITALL);
 
       auto* request_data_recv = new RequestData{RECV_EVENT, recv_buffer};
       io_uring_sqe_set_data(sqe_recv, request_data_recv);
+
+      recv_index++;
+    }
+    auto recv_index_diff = recv_index - recv_index_pre;
+    //    std::cout << "Recv index: " << recv_index << " (diff: " <<
+    //    recv_index_diff
+    //              << ")" << std::endl;
+
+    if (send_index_diff != 0 || recv_index_diff != 0) {
+      io_uring_submit(&ring);
     }
 
-    io_uring_submit(&ring);
+    // Process completed requests
+    struct io_uring_cqe* cqe;
+    unsigned head;
+    unsigned count = 0;
 
-    for (int i = 0; i < BATCH_SIZE * 2; ++i) {
-      struct io_uring_cqe* cqe;
-      io_uring_wait_cqe(&ring, &cqe);
+    io_uring_for_each_cqe(&ring, head, cqe) {
       auto* data = static_cast<RequestData*>(io_uring_cqe_get_data(cqe));
 
       if (cqe->res < 0) {
@@ -97,7 +125,7 @@ void send_receive_data(int sock) {
         }
       } else if (data->event_type == RECV_EVENT) {
         iterations_received++;
-        if (iterations_received % 1000 == 0) {
+        if (iterations_received % 10000 == 0) {
           auto iter_per_second =
               iterations_received /
               std::chrono::duration<double>(
@@ -105,6 +133,16 @@ void send_receive_data(int sock) {
                   .count();
           std::cout << "Iterations received: " << iterations_received << " ["
                     << iter_per_second << " it/s]" << std::endl;
+        }
+
+        if (cqe->res != PAGE_SIZE * sizeof(int32_t)) {
+          std::cout << "Received incorrect number of bytes: " << cqe->res
+                    << " (first uint32 hex: " << std::hex << data->buffer[0]
+                    << ")" << std::endl;
+          //          exit(EXIT_FAILURE);
+        } else {
+          //          std::cout << "Received " << cqe->res << " bytes" <<
+          //          std::endl;
         }
 
 #if VERIFY
@@ -120,8 +158,18 @@ void send_receive_data(int sock) {
             break;
           }
         }
+        if (first >= NUM_REQUESTS) {
+          std::cout << "Received out-of-range response at index " << first
+                    << std::endl;
+          correct = false;
+        } else if (received[first]) {
+          std::cout << "Received duplicate response at index " << first
+                    << std::endl;
+          correct = false;
+        }
         if (correct) {
           correct_responses++;
+          received[first] = true;
         } else {
           incorrect_responses++;
         }
@@ -131,8 +179,10 @@ void send_receive_data(int sock) {
       delete[] data->buffer;
       delete data;
 
-      io_uring_cqe_seen(&ring, cqe);
+      count++;
     }
+
+    io_uring_cq_advance(&ring, count);
   }
 
   std::chrono::duration<double> elapsed =
@@ -145,8 +195,16 @@ void send_receive_data(int sock) {
 
   io_uring_queue_exit(&ring);
   std::cout << "Iterations received: " << iterations_received << std::endl;
+#if VERIFY
+  for (int i = 0; i < NUM_REQUESTS; ++i) {
+    if (!received[i]) {
+      std::cout << "Missing response at index " << i << std::endl;
+    }
+  }
+  std::cout << "Total iterations: " << NUM_REQUESTS << std::endl;
   std::cout << "Correct responses: " << correct_responses << std::endl;
   std::cout << "Incorrect responses: " << incorrect_responses << std::endl;
+#endif
 }
 
 int main() {
