@@ -8,7 +8,9 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
+#include <thread>
 #include <vector>
 
 #include "simple_consts.hpp"
@@ -41,38 +43,49 @@ int setup_socket() {
   return sock;
 }
 
-void send_receive_data(int sock) {
+void send_receive_data(size_t start_index, size_t end_index,
+                       size_t thread_index) {
+  std::cout << "[" << thread_index << "] start_index: " << start_index
+            << ", end_index: " << end_index << std::endl;
+  int sock = setup_socket();
+  if (sock < 0) {
+    std::cout << "[" << thread_index << "] Failed to connect to server"
+              << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  size_t num_requests = end_index - start_index;
   struct io_uring ring {};
   int r = io_uring_queue_init(RING_SIZE, &ring, IORING_SETUP_SINGLE_ISSUER);
   if (r < 0) {
-    std::cout << "io_uring_queue_init failed: " << strerror(-r) << std::endl;
+    std::cout << "[" << thread_index
+              << "] io_uring_queue_init failed: " << strerror(-r) << std::endl;
     exit(EXIT_FAILURE);
   }
 
 #if VERIFY
   int correct_responses = 0;
   int incorrect_responses = 0;
-  bool received[NUM_REQUESTS] = {false};
+  bool* received = new bool[num_requests]();
 #endif
 
   int iterations_received = 0;
 
-  auto start = std::chrono::high_resolution_clock::now();
+  auto start_time = std::chrono::high_resolution_clock::now();
 
   int send_index = 0;
   int recv_index = 0;
 
-  while (send_index < NUM_REQUESTS || recv_index < NUM_REQUESTS ||
-         iterations_received < NUM_REQUESTS) {
-    //    std::cout << "Send index: " << send_index << ", recv index: " <<
-    //    recv_index
-    //              << ", iterations received: " << iterations_received <<
-    //              std::endl;
+  while (send_index < num_requests || recv_index < num_requests ||
+         iterations_received < num_requests) {
     // Submit send requests
     auto send_index_pre = send_index;
-    while (send_index < NUM_REQUESTS &&
-           send_index - recv_index < RING_SIZE / 4) {
-      auto* send_buffer = new int32_t(send_index);
+    while (send_index < num_requests &&
+           send_index - recv_index < RING_SIZE / 2) {
+#if VERBOSE
+      std::cout << "[" << thread_index << "] send_index: " << send_index
+                << std::endl;
+#endif
+      auto* send_buffer = new int32_t(start_index + send_index);
       struct io_uring_sqe* sqe_send = io_uring_get_sqe(&ring);
       io_uring_prep_send(sqe_send, sock, send_buffer, sizeof(int32_t), 0);
 
@@ -82,14 +95,15 @@ void send_receive_data(int sock) {
       send_index++;
     }
     auto send_index_diff = send_index - send_index_pre;
-    //    std::cout << "Send index: " << send_index << " (diff: " <<
-    //    send_index_diff
-    //              << ")" << std::endl;
 
     // Submit receive requests
     auto recv_index_pre = recv_index;
     while (recv_index < send_index &&
-           recv_index - iterations_received < RING_SIZE / 4) {
+           recv_index - iterations_received < RING_SIZE / 2) {
+#if VERBOSE
+      std::cout << "[" << thread_index << "] recv_index: " << recv_index
+                << std::endl;
+#endif
       auto* recv_buffer = new int32_t[PAGE_SIZE];
       struct io_uring_sqe* sqe_recv = io_uring_get_sqe(&ring);
       io_uring_prep_recv(sqe_recv, sock, recv_buffer,
@@ -101,11 +115,13 @@ void send_receive_data(int sock) {
       recv_index++;
     }
     auto recv_index_diff = recv_index - recv_index_pre;
-    //    std::cout << "Recv index: " << recv_index << " (diff: " <<
-    //    recv_index_diff
-    //              << ")" << std::endl;
 
     if (send_index_diff != 0 || recv_index_diff != 0) {
+#if VERBOSE
+      std::cout << "[" << thread_index
+                << "] Ring space left: " << io_uring_sq_space_left(&ring)
+                << std::endl;
+#endif
       io_uring_submit(&ring);
     }
 
@@ -119,9 +135,11 @@ void send_receive_data(int sock) {
 
       if (cqe->res < 0) {
         if (data->event_type == SEND_EVENT) {
-          std::cout << "Send failed: " << strerror(-cqe->res) << std::endl;
+          std::cout << "[" << thread_index
+                    << "] Send failed: " << strerror(-cqe->res) << std::endl;
         } else {
-          std::cout << "Receive failed: " << strerror(-cqe->res) << std::endl;
+          std::cout << "[" << thread_index
+                    << "] Receive failed: " << strerror(-cqe->res) << std::endl;
         }
       } else if (data->event_type == RECV_EVENT) {
         iterations_received++;
@@ -129,20 +147,19 @@ void send_receive_data(int sock) {
           auto iter_per_second =
               iterations_received /
               std::chrono::duration<double>(
-                  std::chrono::high_resolution_clock::now() - start)
+                  std::chrono::high_resolution_clock::now() - start_time)
                   .count();
-          std::cout << "Iterations received: " << iterations_received << " ["
+          std::cout << "[" << thread_index
+                    << "] Iterations received: " << iterations_received << " ["
                     << iter_per_second << " it/s]" << std::endl;
         }
 
         if (cqe->res != PAGE_SIZE * sizeof(int32_t)) {
-          std::cout << "Received incorrect number of bytes: " << cqe->res
+          std::cout << "[" << thread_index
+                    << "] Received incorrect number of bytes: " << cqe->res
                     << " (first uint32 hex: " << std::hex << data->buffer[0]
                     << ")" << std::endl;
-          //          exit(EXIT_FAILURE);
-        } else {
-          //          std::cout << "Received " << cqe->res << " bytes" <<
-          //          std::endl;
+          exit(EXIT_FAILURE);
         }
 
 #if VERIFY
@@ -151,25 +168,27 @@ void send_receive_data(int sock) {
         int32_t first = data->buffer[0];
         for (int j = 0; j < PAGE_SIZE; ++j) {
           if (data->buffer[j] != first) {
-            std::cout << "Incorrect response at index "
+            std::cout << "[" << thread_index << "] Incorrect response at index "
                       << iterations_received - 1 << ", value "
                       << data->buffer[j] << std::endl;
             correct = false;
             break;
           }
         }
-        if (first >= NUM_REQUESTS) {
-          std::cout << "Received out-of-range response at index " << first
+        if (first < start_index || first >= end_index) {
+          std::cout << "[" << thread_index
+                    << "] Received out-of-range response at index " << first
                     << std::endl;
           correct = false;
-        } else if (received[first]) {
-          std::cout << "Received duplicate response at index " << first
+        } else if (received[first - start_index]) {
+          std::cout << "[" << thread_index
+                    << "] Received duplicate response at index " << first
                     << std::endl;
           correct = false;
         }
         if (correct) {
           correct_responses++;
-          received[first] = true;
+          received[first - start_index] = true;
         } else {
           incorrect_responses++;
         }
@@ -186,32 +205,68 @@ void send_receive_data(int sock) {
   }
 
   std::chrono::duration<double> elapsed =
-      std::chrono::high_resolution_clock::now() - start;
-  double it_per_second = NUM_REQUESTS / elapsed.count();
-  std::cout << "Total time: " << elapsed.count() << " s" << std::endl;
-  std::cout << "Average speed: "
+      std::chrono::high_resolution_clock::now() - start_time;
+  double it_per_second = (double)num_requests / elapsed.count();
+  std::cout << "[" << thread_index << "] Total time: " << elapsed.count()
+            << " s" << std::endl;
+  std::cout << "[" << thread_index << "] Average speed: "
             << it_per_second * PAGE_SIZE * sizeof(int32_t) * 8 / 1e9 << " Gbps"
             << std::endl;
 
   io_uring_queue_exit(&ring);
-  std::cout << "Iterations received: " << iterations_received << std::endl;
+  std::cout << "[" << thread_index
+            << "] Iterations received: " << iterations_received << std::endl;
 #if VERIFY
-  for (int i = 0; i < NUM_REQUESTS; ++i) {
+  for (int i = 0; i < num_requests; ++i) {
     if (!received[i]) {
-      std::cout << "Missing response at index " << i << std::endl;
+      std::cout << "[" << thread_index << "] Missing response at index "
+                << start_index + i << std::endl;
     }
   }
-  std::cout << "Total iterations: " << NUM_REQUESTS << std::endl;
-  std::cout << "Correct responses: " << correct_responses << std::endl;
-  std::cout << "Incorrect responses: " << incorrect_responses << std::endl;
+  std::cerr << "[" << thread_index << "] Total iterations: " << num_requests
+            << std::endl;
+  std::cerr << "[" << thread_index
+            << "] Correct responses: " << correct_responses << std::endl;
+  std::cerr << "[" << thread_index
+            << "] Incorrect responses: " << incorrect_responses << std::endl;
+
+  delete[] received;
 #endif
+
+  close(sock);
 }
 
 int main() {
-  int sock = setup_socket();
-  if (sock >= 0) {
-    send_receive_data(sock);
-    close(sock);
+  size_t client_threads = 1;
+  auto start_time = std::chrono::high_resolution_clock::now();
+
+  std::vector<std::thread> threads;
+  size_t requests_per_thread = NUM_REQUESTS / client_threads;
+  for (size_t i = 0; i < client_threads; i++) {
+    size_t start_index = i * requests_per_thread;
+    size_t end_index = (i == client_threads - 1)
+                           ? NUM_REQUESTS
+                           : (i + 1) * requests_per_thread;
+    std::cout << "Starting thread " << i << " for range " << start_index << " "
+              << end_index << std::endl;
+    threads.emplace_back(send_receive_data, start_index, end_index, i);
   }
+
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  double total_time =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::high_resolution_clock::now() - start_time)
+          .count() /
+      1e9;
+  double avg_rate = (double)NUM_REQUESTS / total_time;
+  double avg_gbps = avg_rate * PAGE_SIZE * sizeof(int32_t) * 8 / 1e9;
+  std::cout << "Total time for " << NUM_REQUESTS << " requests: " << total_time
+            << " s" << std::endl;
+  std::cout << "Average rate: " << std::fixed << std::setprecision(2)
+            << avg_rate << " it/s" << std::endl;
+  std::cout << "Average Gbps: " << avg_gbps << std::endl;
   return 0;
 }

@@ -62,12 +62,21 @@ void event_loop(struct io_uring& ring, int client_socket) {
         int32_t page_number;
         memcpy(&page_number, req->data, sizeof(int32_t));
         if (page_number > NUM_REQUESTS) {
-          std::cout << "Requested page number: " << page_number << std::endl;
+          std::cout << "Requested invalid page number: " << page_number
+                    << std::endl;
           exit(EXIT_FAILURE);
         }
 
+#if VERBOSE
+        std::cout << "Requested page number: " << page_number << std::endl;
+#endif
+
         auto* response =
             static_cast<int32_t*>(malloc(PAGE_SIZE * sizeof(int32_t)));
+        if (!response) {
+          std::cout << "Failed to allocate memory for response" << std::endl;
+          exit(EXIT_FAILURE);
+        }
         for (int i = 0; i < PAGE_SIZE; i++) {
           response[i] = page_number;
         }
@@ -78,8 +87,9 @@ void event_loop(struct io_uring& ring, int client_socket) {
         break;
       }
       case WRITE_EVENT:
-        //        std::cout << "Write complete, keeping connection open" <<
-        //        std::endl;
+#if VERBOSE
+        std::cout << "Write complete, keeping connection open" << std::endl;
+#endif
         free(req->data);
         break;
       default:
