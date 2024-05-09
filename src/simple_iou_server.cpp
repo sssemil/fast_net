@@ -32,7 +32,7 @@ void add_write_request(struct io_uring& ring, int client_socket,
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
   auto* req = new RequestData{WRITE_EVENT};
 
-  io_uring_prep_write(sqe, client_socket, data, PAGE_SIZE * sizeof(int32_t), 0);
+  io_uring_prep_send(sqe, client_socket, data, PAGE_SIZE * sizeof(int32_t), 0);
   io_uring_sqe_set_data(sqe, req);
 }
 

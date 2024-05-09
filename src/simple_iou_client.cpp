@@ -1,11 +1,11 @@
 #include <arpa/inet.h>
+#include <fmt/format.h>
 #include <liburing.h>
 #include <netinet/in.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <iomanip>
@@ -21,6 +21,22 @@ struct RequestData {
   EventType event_type;
   int32_t* buffer;
 };
+
+void debug_print_array(uint8_t* arr, uint32_t size) {
+  std::string debug_data_first;
+  std::string debug_data_last;
+  debug_data_first.reserve(100);
+  debug_data_last.reserve(100);
+  auto* iov_base_data = static_cast<uint8_t*>(arr);
+  for (int j = 0; j < 24 && j < size; ++j) {
+    debug_data_first += fmt::format("{:02X} ", iov_base_data[j]);
+  }
+  for (int j = size - 24; j < size; ++j) {
+    debug_data_last += fmt::format("{:02X} ", iov_base_data[j]);
+  }
+  std::cout << "First 30 and last 30 bytes: " << debug_data_first << " ... "
+            << debug_data_last << std::endl;
+}
 
 int setup_socket() {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -191,6 +207,8 @@ void send_receive_data(size_t start_index, size_t end_index,
           received[first - start_index] = true;
         } else {
           incorrect_responses++;
+          debug_print_array(reinterpret_cast<uint8_t*>(data->buffer),
+                            PAGE_SIZE * sizeof(int32_t));
         }
 #endif
       }
@@ -237,7 +255,7 @@ void send_receive_data(size_t start_index, size_t end_index,
 }
 
 int main() {
-  size_t client_threads = 1;
+  size_t client_threads = CLIENT_THREADS;
   auto start_time = std::chrono::high_resolution_clock::now();
 
   std::vector<std::thread> threads;
