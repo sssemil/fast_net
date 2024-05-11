@@ -6,3 +6,10 @@
 #define VERIFY 1
 #define VERBOSE 0
 #define CLIENT_THREADS 1
+
+struct RequestData {
+  int event_type;
+  int32_t* buffer;
+};
+
+enum EventType { READ_EVENT, WRITE_EVENT, SEND_EVENT, RECV_EVENT };

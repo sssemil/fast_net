@@ -15,13 +15,6 @@
 
 #include "simple_consts.hpp"
 
-enum EventType { SEND_EVENT, RECV_EVENT };
-
-struct RequestData {
-  EventType event_type;
-  int32_t* buffer;
-};
-
 void debug_print_array(uint8_t* arr, uint32_t size) {
   std::string debug_data_first;
   std::string debug_data_last;

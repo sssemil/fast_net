@@ -11,19 +11,12 @@
 
 #include "simple_consts.hpp"
 
-struct RequestData {
-  int event_type;
-  int32_t* data;
-};
-
-enum EventType { READ_EVENT, WRITE_EVENT };
-
 void add_read_request(struct io_uring& ring, int client_socket) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
   auto* req = new RequestData{READ_EVENT};
-  req->data = new int32_t;
+  req->buffer = new int32_t;
 
-  io_uring_prep_read(sqe, client_socket, req->data, sizeof(int32_t), 0);
+  io_uring_prep_read(sqe, client_socket, req->buffer, sizeof(int32_t), 0);
   io_uring_sqe_set_data(sqe, req);
 }
 
@@ -60,7 +53,7 @@ void event_loop(struct io_uring& ring, int client_socket) {
         }
 
         int32_t page_number;
-        memcpy(&page_number, req->data, sizeof(int32_t));
+        memcpy(&page_number, req->buffer, sizeof(int32_t));
         if (page_number > NUM_REQUESTS) {
           std::cout << "Requested invalid page number: " << page_number
                     << std::endl;
@@ -81,7 +74,7 @@ void event_loop(struct io_uring& ring, int client_socket) {
           response[i] = page_number;
         }
         add_write_request(ring, client_socket, response);
-        free(req->data);
+        free(req->buffer);
         add_read_request(ring, client_socket);
         io_uring_submit(&ring);
         break;
@@ -90,7 +83,7 @@ void event_loop(struct io_uring& ring, int client_socket) {
 #if VERBOSE
         std::cout << "Write complete, keeping connection open" << std::endl;
 #endif
-        free(req->data);
+        free(req->buffer);
         break;
       default:
         std::cout << "Unknown event type: " << req->event_type << std::endl;
