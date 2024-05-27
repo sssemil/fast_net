@@ -1,5 +1,4 @@
 #include <arpa/inet.h>
-#include <fmt/format.h>
 #include <liburing.h>
 #include <netinet/in.h>
 #include <sys/mman.h>
@@ -15,20 +14,26 @@
 
 #include "simple_consts.hpp"
 
-void debug_print_array(uint8_t* arr, uint32_t size) {
-  std::string debug_data_first;
-  std::string debug_data_last;
-  debug_data_first.reserve(100);
-  debug_data_last.reserve(100);
-  auto* iov_base_data = static_cast<uint8_t*>(arr);
+void debug_print_array(uint8_t *arr, uint32_t size) {
+  std::ostringstream debug_data_first;
+  std::ostringstream debug_data_last;
+
+  auto *iov_base_data = static_cast<uint8_t *>(arr);
+
   for (int j = 0; j < 24 && j < size; ++j) {
-    debug_data_first += fmt::format("{:02X} ", iov_base_data[j]);
+    debug_data_first << std::uppercase << std::setw(2) << std::setfill('0')
+                     << std::hex << static_cast<int>(iov_base_data[j]) << " ";
   }
-  for (int j = size - 24; j < size; ++j) {
-    debug_data_last += fmt::format("{:02X} ", iov_base_data[j]);
+
+  if (size > 24) {
+    for (int j = size - 24; j < size; ++j) {
+      debug_data_last << std::uppercase << std::setw(2) << std::setfill('0')
+                      << std::hex << static_cast<int>(iov_base_data[j]) << " ";
+    }
   }
-  std::cout << "First 30 and last 30 bytes: " << debug_data_first << " ... "
-            << debug_data_last << std::endl;
+
+  std::cout << "First 24 and last 24 bytes: " << debug_data_first.str()
+            << " ... " << debug_data_last.str() << std::endl;
 }
 
 int setup_socket() {
