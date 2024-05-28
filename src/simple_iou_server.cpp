@@ -11,27 +11,28 @@
 
 #include "simple_consts.hpp"
 
-void add_read_request(struct io_uring& ring, int client_socket) {
+void add_read_request(struct io_uring& ring, int client_socket, size_t seq1, size_t seq2) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new RequestData{READ_EVENT};
-  req->buffer = new int32_t;
+  auto* req = new RequestData{{seq1, seq2},READ_EVENT, new int32_t, 0 };
 
   io_uring_prep_read(sqe, client_socket, req->buffer, sizeof(int32_t), 0);
   io_uring_sqe_set_data(sqe, req);
 }
 
 void add_write_request(struct io_uring& ring, int client_socket,
-                       int32_t* data) {
+                       int32_t* data, size_t seq1, size_t seq2) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new RequestData{WRITE_EVENT};
+  auto* req = new RequestData{{seq1, seq2}, WRITE_EVENT, data, 0};
 
   io_uring_prep_send(sqe, client_socket, data, PAGE_SIZE * sizeof(int32_t), 0);
   io_uring_sqe_set_data(sqe, req);
 }
 
-void event_loop(struct io_uring& ring, int client_socket) {
+void event_loop(struct io_uring& ring, int client_socket, size_t client_num) {
+  size_t read_req_num = 0;
+  size_t write_req_num = 0;
   for (int i = 0; i < RING_SIZE / 4; i++) {
-    add_read_request(ring, client_socket);
+    add_read_request(ring, client_socket, client_num, read_req_num++);
   }
   io_uring_submit(&ring);
 
@@ -73,9 +74,9 @@ void event_loop(struct io_uring& ring, int client_socket) {
         for (int i = 0; i < PAGE_SIZE; i++) {
           response[i] = page_number;
         }
-        add_write_request(ring, client_socket, response);
+        add_write_request(ring, client_socket, response, client_num, write_req_num++);
         free(req->buffer);
-        add_read_request(ring, client_socket);
+        add_read_request(ring, client_socket, client_num, read_req_num++);
         io_uring_submit(&ring);
         break;
       }
@@ -95,7 +96,7 @@ void event_loop(struct io_uring& ring, int client_socket) {
   }
 }
 
-void handle_client(const int client_socket) {
+void handle_client(const int client_socket, size_t client_num) {
   std::cout << "Handling a new client" << std::endl;
   struct io_uring ring {};
   int r = io_uring_queue_init(RING_SIZE, &ring, IORING_SETUP_SINGLE_ISSUER);
@@ -103,7 +104,7 @@ void handle_client(const int client_socket) {
     std::cout << "io_uring_queue_init failed: " << strerror(-r) << std::endl;
     exit(EXIT_FAILURE);
   }
-  event_loop(ring, client_socket);
+  event_loop(ring, client_socket, client_num);
   io_uring_queue_exit(&ring);
 }
 
@@ -134,6 +135,7 @@ int main() {
 
   std::cout << "Server started. Listening on port " << PORT << std::endl;
 
+  size_t client_num = 0;
   while (true) {
     int new_socket;
     if ((new_socket = accept(server_fd, reinterpret_cast<sockaddr*>(&address),
@@ -142,7 +144,7 @@ int main() {
       exit(EXIT_FAILURE);
     }
 
-    std::thread client_thread(handle_client, new_socket);
+    std::thread client_thread(handle_client, new_socket, client_num++);
     client_thread.detach();
   }
 }

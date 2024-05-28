@@ -14,11 +14,11 @@
 
 #include "simple_consts.hpp"
 
-void debug_print_array(uint8_t *arr, uint32_t size) {
+void debug_print_array(uint8_t* arr, uint32_t size) {
   std::ostringstream debug_data_first;
   std::ostringstream debug_data_last;
 
-  auto *iov_base_data = static_cast<uint8_t *>(arr);
+  auto* iov_base_data = static_cast<uint8_t*>(arr);
 
   for (int j = 0; j < 24 && j < size; ++j) {
     debug_data_first << std::uppercase << std::setw(2) << std::setfill('0')
@@ -32,7 +32,8 @@ void debug_print_array(uint8_t *arr, uint32_t size) {
     }
   }
 
-  std::cout << "First 24 and last 24 bytes: " << debug_data_first.str()
+  std::cout << "[" << static_cast<void*>(arr) << "] "
+            << "First 24 and last 24 bytes: " << debug_data_first.str()
             << " ... " << debug_data_last.str() << std::endl;
 }
 
@@ -76,12 +77,6 @@ void send_receive_data(size_t start_index, size_t end_index,
     exit(EXIT_FAILURE);
   }
 
-#if VERIFY
-  int correct_responses = 0;
-  int incorrect_responses = 0;
-  bool* received = new bool[num_requests]();
-#endif
-
   int iterations_received = 0;
 
   auto start_time = std::chrono::high_resolution_clock::now();
@@ -89,12 +84,22 @@ void send_receive_data(size_t start_index, size_t end_index,
   int send_index = 0;
   int recv_index = 0;
 
-  while (send_index < num_requests || recv_index < num_requests ||
-         iterations_received < num_requests) {
+  size_t total_received = 0;
+  size_t total_expected_received = num_requests * PAGE_SIZE * sizeof(int32_t);
+#if VERIFY
+  std::vector<RequestData> recvs;
+#endif
+  size_t recv_req_num = 0;
+  size_t send_req_num = 0;
+
+  while (send_index < num_requests || recv_index < num_requests
+         //         || iterations_received < num_requests || total_received <
+         //         total_expected_received
+  ) {
     // Submit send requests
     auto send_index_pre = send_index;
     while (send_index < num_requests &&
-           send_index - recv_index < RING_SIZE / 2) {
+           send_index - recv_index < RING_SIZE / 4) {
 #if VERBOSE
       std::cout << "[" << thread_index << "] send_index: " << send_index
                 << std::endl;
@@ -103,7 +108,8 @@ void send_receive_data(size_t start_index, size_t end_index,
       struct io_uring_sqe* sqe_send = io_uring_get_sqe(&ring);
       io_uring_prep_send(sqe_send, sock, send_buffer, sizeof(int32_t), 0);
 
-      auto* request_data_send = new RequestData{SEND_EVENT, send_buffer};
+      auto* request_data_send = new RequestData{
+          {thread_index, send_req_num++}, SEND_EVENT, send_buffer, 0};
       io_uring_sqe_set_data(sqe_send, request_data_send);
 
       send_index++;
@@ -123,13 +129,43 @@ void send_receive_data(size_t start_index, size_t end_index,
       io_uring_prep_recv(sqe_recv, sock, recv_buffer,
                          PAGE_SIZE * sizeof(int32_t), MSG_WAITALL);
 
-      auto* request_data_recv = new RequestData{RECV_EVENT, recv_buffer};
+      auto* request_data_recv = new RequestData{
+          {thread_index, recv_req_num++}, RECV_EVENT, recv_buffer, 0};
       io_uring_sqe_set_data(sqe_recv, request_data_recv);
 
       recv_index++;
     }
     auto recv_index_diff = recv_index - recv_index_pre;
 
+    // here we handle recvs for the remaining bytes
+    //    if (send_index >= num_requests && recv_index >= num_requests) {
+    //      size_t remaining_bytes = total_expected_received - total_received;
+    //      size_t recvs_to_submit = std::min(remaining_bytes / PAGE_SIZE,
+    //                                        (size_t)io_uring_sq_space_left(&ring));
+    //      std::cout << "[" << thread_index
+    //                << "] Remaining bytes: " << remaining_bytes
+    //                << ". Recvs to submit: " << recvs_to_submit
+    //                << ". Space in ring: " << io_uring_sq_space_left(&ring)
+    //                << std::endl;
+    //      for (size_t i = 0; i < recvs_to_submit; i++) {
+    // #if VERBOSE
+    //        std::cout << "[" << thread_index << "] recv_index: " << recv_index
+    //                  << std::endl;
+    // #endif
+    //        auto* recv_buffer = new int32_t[PAGE_SIZE];
+    //        struct io_uring_sqe* sqe_recv = io_uring_get_sqe(&ring);
+    //        io_uring_prep_recv(sqe_recv, sock, recv_buffer,
+    //                           PAGE_SIZE * sizeof(int32_t), MSG_WAITALL);
+    //
+    //        auto* request_data_recv = new RequestData{
+    //            {thread_index, recv_req_num++}, RECV_EVENT, recv_buffer, 0};
+    //        io_uring_sqe_set_data(sqe_recv, request_data_recv);
+    //
+    //        recv_index++;
+    //      }
+    //      io_uring_submit(&ring);
+    //    }
+    //
     if (send_index_diff != 0 || recv_index_diff != 0) {
 #if VERBOSE
       std::cout << "[" << thread_index
@@ -147,15 +183,41 @@ void send_receive_data(size_t start_index, size_t end_index,
     io_uring_for_each_cqe(&ring, head, cqe) {
       auto* data = static_cast<RequestData*>(io_uring_cqe_get_data(cqe));
 
+#if VERBOSE
+      size_t seq = data->seq[1];
+      std::cout << "[" << thread_index << "] type: " << data->event_type
+                << "; seq: " << seq << std::endl;
+#endif
+
       if (cqe->res < 0) {
         if (data->event_type == SEND_EVENT) {
           std::cout << "[" << thread_index
                     << "] Send failed: " << strerror(-cqe->res) << std::endl;
-        } else {
+        } else if (data->event_type == RECV_EVENT) {
           std::cout << "[" << thread_index
                     << "] Receive failed: " << strerror(-cqe->res) << std::endl;
+        } else {
+          std::cout << "[" << thread_index
+                    << "] Unknown event type: " << data->event_type
+                    << std::endl;
         }
-      } else if (data->event_type == RECV_EVENT) {
+        exit(EXIT_FAILURE);
+      }
+
+      // we know the call was processed without errors, so, res has the size of
+      // bytes read now
+      data->buffer_offset = cqe->res;
+      if (data->event_type == RECV_EVENT) {
+        total_received += cqe->res;
+#if VERIFY
+        recvs.push_back(*data);
+#endif
+#if VERBOSE
+        std::cout << "[" << thread_index << "] Received " << cqe->res
+                  << " bytes. Total received: " << total_received
+                  << ". Total expected: " << total_expected_received
+                  << std::endl;
+#endif
         iterations_received++;
         if (iterations_received % 10000 == 0) {
           auto iter_per_second =
@@ -167,62 +229,54 @@ void send_receive_data(size_t start_index, size_t end_index,
                     << "] Iterations received: " << iterations_received << " ["
                     << iter_per_second << " it/s]" << std::endl;
         }
-
-        if (cqe->res != PAGE_SIZE * sizeof(int32_t)) {
-          std::cout << "[" << thread_index
-                    << "] Received incorrect number of bytes: " << cqe->res
-                    << " (first uint32 hex: " << std::hex << data->buffer[0]
-                    << ")" << std::endl;
-          exit(EXIT_FAILURE);
-        }
-
-#if VERIFY
-        // Validate response
-        bool correct = true;
-        int32_t first = data->buffer[0];
-        for (int j = 0; j < PAGE_SIZE; ++j) {
-          if (data->buffer[j] != first) {
-            std::cout << "[" << thread_index << "] Incorrect response at index "
-                      << iterations_received - 1 << ", value "
-                      << data->buffer[j] << std::endl;
-            correct = false;
-            break;
-          }
-        }
-        if (first < start_index || first >= end_index) {
-          std::cout << "[" << thread_index
-                    << "] Received out-of-range response at index " << first
-                    << std::endl;
-          correct = false;
-        } else if (received[first - start_index]) {
-          std::cout << "[" << thread_index
-                    << "] Received duplicate response at index " << first
-                    << std::endl;
-          correct = false;
-        }
-        if (correct) {
-          correct_responses++;
-          received[first - start_index] = true;
-        } else {
-          incorrect_responses++;
-          debug_print_array(reinterpret_cast<uint8_t*>(data->buffer),
-                            PAGE_SIZE * sizeof(int32_t));
-        }
-#endif
       }
 
+#if !VERIFY
       delete[] data->buffer;
       delete data;
-
+#endif
       count++;
     }
 
     io_uring_cq_advance(&ring, count);
+
+    if (total_received >= total_expected_received &&
+        send_index >= num_requests) {
+      std::cout << "[" << thread_index
+                << "] !!! Total received: " << total_received
+                << ". Total expected: " << total_expected_received << std::endl;
+      break;
+    }
   }
 
   std::chrono::duration<double> elapsed =
       std::chrono::high_resolution_clock::now() - start_time;
   double it_per_second = (double)num_requests / elapsed.count();
+
+#if VERIFY
+  std::sort(recvs.begin(), recvs.end(),
+            [](const RequestData& a, const RequestData& b) {
+              return a.seq[1] < b.seq[1];
+            });
+  for (auto& recv : recvs) {
+    auto* data = recv.buffer;
+#if VERBOSE
+    std::cout << "[" << thread_index << "] Received data ("
+              << recv.buffer_offset << " bytes) for seq: " << recv.seq[1]
+              << std::endl;
+    debug_print_array(
+        reinterpret_cast<uint8_t*>(data),
+        std::min((ssize_t)(PAGE_SIZE * sizeof(int32_t)), recv.buffer_offset));
+#endif
+    delete[] data;
+  }
+#endif
+
+  std::cout << "[" << thread_index << "] Diff: "
+            << 1.0 - (double)total_received / (double)total_expected_received
+            << " (Total received: " << total_received
+            << ". Total expected: " << total_expected_received << ")"
+            << std::endl;
   std::cout << "[" << thread_index << "] Total time: " << elapsed.count()
             << " s" << std::endl;
   std::cout << "[" << thread_index << "] Average speed: "
@@ -232,23 +286,6 @@ void send_receive_data(size_t start_index, size_t end_index,
   io_uring_queue_exit(&ring);
   std::cout << "[" << thread_index
             << "] Iterations received: " << iterations_received << std::endl;
-#if VERIFY
-  for (int i = 0; i < num_requests; ++i) {
-    if (!received[i]) {
-      std::cout << "[" << thread_index << "] Missing response at index "
-                << start_index + i << std::endl;
-    }
-  }
-  std::cerr << "[" << thread_index << "] Total iterations: " << num_requests
-            << std::endl;
-  std::cerr << "[" << thread_index
-            << "] Correct responses: " << correct_responses << std::endl;
-  std::cerr << "[" << thread_index
-            << "] Incorrect responses: " << incorrect_responses << std::endl;
-
-  delete[] received;
-#endif
-
   close(sock);
 }
 

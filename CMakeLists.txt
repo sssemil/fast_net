@@ -43,10 +43,10 @@ target_link_libraries(client_iou PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_3
 
 
 add_executable(simple_iou_server "${PROJECT_SOURCE_DIR}/simple_iou_server.cpp" ${SOURCE_FILES} ${HEADER_FILES})
-target_link_libraries(simple_iou_server PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> uring)
+target_link_libraries(simple_iou_server PRIVATE uring)
 
 add_executable(simple_iou_client "${PROJECT_SOURCE_DIR}/simple_iou_client.cpp" ${SOURCE_FILES} ${HEADER_FILES})
-target_link_libraries(simple_iou_client PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> uring)
+target_link_libraries(simple_iou_client PRIVATE uring)
 
 
 add_custom_target(
