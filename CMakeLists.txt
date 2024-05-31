@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.27)
+cmake_minimum_required(VERSION 3.22)
 project(fast_net)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -13,6 +13,12 @@ add_subdirectory(libs/spdlog)
 # Manual inclusion of liburing
 include_directories(libs/liburing/src/include)
 link_directories(libs/liburing/src)
+
+add_definitions(-DPAGE_SIZE=${PAGE_SIZE})
+add_definitions(-DPORT=${PORT})
+add_definitions(-DRING_SIZE=${RING_SIZE})
+add_definitions(-DNUM_REQUESTS=${NUM_REQUESTS})
+add_definitions(-DCLIENT_THREADS=${CLIENT_THREADS})
 
 set(PROJECT_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src)
 
@@ -29,18 +35,17 @@ list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/client.cpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/client_iou.cpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/simple_iou_client.cpp")
 
-add_executable(server "${PROJECT_SOURCE_DIR}/server.cpp" ${SOURCE_FILES} ${HEADER_FILES})
-target_link_libraries(server PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32>)
-
-add_executable(client "${PROJECT_SOURCE_DIR}/client.cpp" ${SOURCE_FILES} ${HEADER_FILES})
-target_link_libraries(client PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32>)
-
-add_executable(server_iou "${PROJECT_SOURCE_DIR}/server_iou.cpp" ${SOURCE_FILES} ${HEADER_FILES})
-target_link_libraries(server_iou PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> uring)
-
-add_executable(client_iou "${PROJECT_SOURCE_DIR}/client_iou.cpp" ${SOURCE_FILES} ${HEADER_FILES})
-target_link_libraries(client_iou PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> uring)
-
+#add_executable(server "${PROJECT_SOURCE_DIR}/server.cpp" ${SOURCE_FILES} ${HEADER_FILES})
+#target_link_libraries(server PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32>)
+#
+#add_executable(client "${PROJECT_SOURCE_DIR}/client.cpp" ${SOURCE_FILES} ${HEADER_FILES})
+#target_link_libraries(client PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32>)
+#
+#add_executable(server_iou "${PROJECT_SOURCE_DIR}/server_iou.cpp" ${SOURCE_FILES} ${HEADER_FILES})
+#target_link_libraries(server_iou PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> uring)
+#
+#add_executable(client_iou "${PROJECT_SOURCE_DIR}/client_iou.cpp" ${SOURCE_FILES} ${HEADER_FILES})
+#target_link_libraries(client_iou PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32> uring)
 
 add_executable(simple_iou_server "${PROJECT_SOURCE_DIR}/simple_iou_server.cpp" ${SOURCE_FILES} ${HEADER_FILES})
 target_link_libraries(simple_iou_server PRIVATE uring)

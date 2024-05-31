@@ -291,6 +291,7 @@ void send_receive_data(size_t start_index, size_t end_index,
 
 int main() {
   size_t client_threads = CLIENT_THREADS;
+  std::cout << "Starting " << client_threads << " client threads" << std::endl;
   auto start_time = std::chrono::high_resolution_clock::now();
 
   std::vector<std::thread> threads;
