@@ -55,11 +55,13 @@ void event_loop(struct io_uring& ring, int client_socket, size_t client_num) {
 
         int32_t page_number;
         memcpy(&page_number, req->buffer, sizeof(int32_t));
+#if VERIFY
         if (page_number > NUM_REQUESTS) {
           std::cout << "Requested invalid page number: " << page_number
                     << std::endl;
           exit(EXIT_FAILURE);
         }
+#endif
 
 #if VERBOSE
         std::cout << "Requested page number: " << page_number << std::endl;
