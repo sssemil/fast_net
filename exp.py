@@ -6,10 +6,10 @@ import re
 import multiprocessing
 import math as m
 
-page_sizes = [2 ** x for x in range(2, 14 + 1)]
+page_sizes = [2 ** x for x in range(4, 14 + 1, 1)]
 ring_sizes = [x for x in range(128, 1024 + 1, 128)]
 client_threads = [2 ** x for x in
-                  range(0, int(m.log(os.cpu_count()) / m.log(2)) + 2)]
+                  range(0, int(m.log(os.cpu_count()) / m.log(2)) + 2, 2)]
 # page_sizes = [1024]
 # ring_sizes = [384]
 # client_threads = [1, 2, 4]

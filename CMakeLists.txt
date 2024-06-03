@@ -14,11 +14,25 @@ add_subdirectory(libs/spdlog)
 include_directories(libs/liburing/src/include)
 link_directories(libs/liburing/src)
 
-add_definitions(-DPAGE_SIZE=${PAGE_SIZE})
-add_definitions(-DPORT=${PORT})
-add_definitions(-DRING_SIZE=${RING_SIZE})
-add_definitions(-DNUM_REQUESTS=${NUM_REQUESTS})
-add_definitions(-DCLIENT_THREADS=${CLIENT_THREADS})
+if (DEFINED PAGE_SIZE)
+    add_definitions(-DPAGE_SIZE=${PAGE_SIZE})
+endif ()
+
+if (DEFINED PORT)
+    add_definitions(-DPORT=${PORT})
+endif ()
+
+if (DEFINED RING_SIZE)
+    add_definitions(-DRING_SIZE=${RING_SIZE})
+endif ()
+
+if (DEFINED NUM_REQUESTS)
+    add_definitions(-DNUM_REQUESTS=${NUM_REQUESTS})
+endif ()
+
+if (DEFINED CLIENT_THREADS)
+    add_definitions(-DCLIENT_THREADS=${CLIENT_THREADS})
+endif ()
 
 set(PROJECT_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src)
 
