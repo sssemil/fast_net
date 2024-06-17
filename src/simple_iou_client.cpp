@@ -12,7 +12,10 @@
 #include <thread>
 #include <vector>
 
+#include "buffer_pool.hpp"
 #include "simple_consts.hpp"
+
+#define BUFFER_POOL_INITIAL_POOL_SIZE 1024
 
 void debug_print_array(uint8_t* arr, uint32_t size) {
   std::ostringstream debug_data_first;
@@ -59,9 +62,14 @@ int setup_socket() {
 }
 
 void send_receive_data(size_t start_index, size_t end_index,
-                       size_t thread_index) {
+                       size_t thread_index, uint64_t* _total_received) {
   std::cout << "[" << thread_index << "] start_index: " << start_index
             << ", end_index: " << end_index << std::endl;
+
+  std::vector buffer_sizes = {PAGE_SIZE * sizeof(int32_t),
+                              sizeof(RequestData) + sizeof(int32_t)};
+  BufferPool buffer_pool(buffer_sizes, BUFFER_POOL_INITIAL_POOL_SIZE);
+
   int sock = setup_socket();
   if (sock < 0) {
     std::cout << "[" << thread_index << "] Failed to connect to server"
@@ -104,12 +112,18 @@ void send_receive_data(size_t start_index, size_t end_index,
       std::cout << "[" << thread_index << "] send_index: " << send_index
                 << std::endl;
 #endif
-      auto* send_buffer = new int32_t(start_index + send_index);
-      struct io_uring_sqe* sqe_send = io_uring_get_sqe(&ring);
-      io_uring_prep_send(sqe_send, sock, send_buffer, sizeof(int32_t), 0);
 
-      auto* request_data_send = new RequestData{
-          {thread_index, send_req_num++}, SEND_EVENT, send_buffer, 0};
+      auto* request_data_send = (RequestData*)buffer_pool.allocate(
+          sizeof(RequestData) + sizeof(int32_t));
+      request_data_send->buffer[0] = start_index + send_index;
+      request_data_send->seq[0] = thread_index;
+      request_data_send->seq[1] = send_req_num++;
+      request_data_send->event_type = SEND_EVENT;
+      request_data_send->buffer_offset = 0;
+
+      struct io_uring_sqe* sqe_send = io_uring_get_sqe(&ring);
+      io_uring_prep_send(sqe_send, sock, request_data_send->buffer,
+                         sizeof(int32_t), 0);
       io_uring_sqe_set_data(sqe_send, request_data_send);
 
       send_index++;
@@ -124,13 +138,15 @@ void send_receive_data(size_t start_index, size_t end_index,
       std::cout << "[" << thread_index << "] recv_index: " << recv_index
                 << std::endl;
 #endif
-      auto* recv_buffer = new int32_t[PAGE_SIZE];
+      auto* request_data_recv = (RequestData*)buffer_pool.allocate(
+          sizeof(RequestData) + PAGE_SIZE * sizeof(int32_t));
+      request_data_recv->seq[0] = thread_index;
+      request_data_recv->seq[1] = recv_req_num++;
+      request_data_recv->event_type = RECV_EVENT;
+      request_data_recv->buffer_offset = 0;
       struct io_uring_sqe* sqe_recv = io_uring_get_sqe(&ring);
-      io_uring_prep_recv(sqe_recv, sock, recv_buffer,
+      io_uring_prep_recv(sqe_recv, sock, request_data_recv->buffer,
                          PAGE_SIZE * sizeof(int32_t), MSG_WAITALL);
-
-      auto* request_data_recv = new RequestData{
-          {thread_index, recv_req_num++}, RECV_EVENT, recv_buffer, 0};
       io_uring_sqe_set_data(sqe_recv, request_data_recv);
 
       recv_index++;
@@ -232,8 +248,15 @@ void send_receive_data(size_t start_index, size_t end_index,
       }
 
 #if !VERIFY
-      delete[] data->buffer;
-      delete data;
+      if (data->event_type == SEND_EVENT) {
+        buffer_pool.deallocate((char*)data,
+                               sizeof(RequestData) + sizeof(int32_t));
+      } else if (data->event_type == RECV_EVENT) {
+        buffer_pool.deallocate(
+            (char*)data, sizeof(RequestData) + PAGE_SIZE * sizeof(int32_t));
+      }
+      // delete[] data->buffer;
+      // delete data;
 #endif
       count++;
     }
@@ -287,6 +310,10 @@ void send_receive_data(size_t start_index, size_t end_index,
   std::cout << "[" << thread_index
             << "] Iterations received: " << iterations_received << std::endl;
   close(sock);
+
+  if (_total_received) {
+    *_total_received = total_received;
+  }
 }
 
 int main() {
@@ -294,6 +321,7 @@ int main() {
   std::cout << "Starting " << client_threads << " client threads" << std::endl;
   auto start_time = std::chrono::high_resolution_clock::now();
 
+  std::vector<uint64_t> total_received(client_threads, 0);
   std::vector<std::thread> threads;
   size_t requests_per_thread = NUM_REQUESTS / client_threads;
   for (size_t i = 0; i < client_threads; i++) {
@@ -303,7 +331,8 @@ int main() {
                            : (i + 1) * requests_per_thread;
     std::cout << "Starting thread " << i << " for range " << start_index << " "
               << end_index << std::endl;
-    threads.emplace_back(send_receive_data, start_index, end_index, i);
+    threads.emplace_back(send_receive_data, start_index, end_index, i,
+                         &total_received[i]);
   }
 
   for (auto& thread : threads) {
@@ -321,6 +350,21 @@ int main() {
             << " s" << std::endl;
   std::cout << "Average rate: " << std::fixed << std::setprecision(2)
             << avg_rate << " it/s" << std::endl;
-  std::cout << "Average Gbps: " << avg_gbps << std::endl;
+  //  std::cout << "Average Gbps: " << avg_gbps << std::endl;
+
+  uint64_t total_received_bytes = 0;
+  for (size_t i = 0; i < client_threads; i++) {
+    total_received_bytes += total_received[i];
+  }
+  double total_received_gbps = total_received_bytes * 8 / 1e9 / total_time;
+  uint64_t expected_total_received_bytes =
+      1u * NUM_REQUESTS * PAGE_SIZE * sizeof(int32_t);
+  std::cout << "Total received: " << total_received_bytes << " bytes"
+            << std::endl;
+  std::cout << "Expected total received: " << expected_total_received_bytes
+            << " bytes" << std::endl;
+  //  std::cout << "Total received Gbps: " << total_received_gbps << std::endl;
+  std::cout << "Average Gbps: " << total_received_gbps << std::endl;
+
   return 0;
 }

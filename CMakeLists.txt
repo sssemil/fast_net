@@ -18,6 +18,10 @@ if (DEFINED PAGE_SIZE)
     add_definitions(-DPAGE_SIZE=${PAGE_SIZE})
 endif ()
 
+if (DEFINED SERVER_ADDR)
+    add_definitions(-DSERVER_ADDR=${SERVER_ADDR})
+endif ()
+
 if (DEFINED PORT)
     add_definitions(-DPORT=${PORT})
 endif ()

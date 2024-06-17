@@ -5,16 +5,24 @@ import csv
 import re
 import multiprocessing
 import math as m
+import socket
 
 # page_sizes = [2 ** x for x in range(4, 14 + 1, 1)]
 # ring_sizes = [x for x in range(128, 1024 + 1, 128)]
 # client_threads = [2 ** x for x in
 #                   range(0, int(m.log(os.cpu_count()) / m.log(2)) + 2)]
-page_sizes = [512, 1024, 2048, 4096]
-ring_sizes = [256]
-client_threads = [64, 128]
+page_sizes = [16, 128, 512, 1024, 2048]
+ring_sizes = [256, 1024, 2048]
+client_threads = [1, 128]
 num_requests = 1024 * 1024
 initial_port = 12348
+
+server_addr = "127.0.0.1"
+if os.getenv("SERVER_ADDR"):
+  server_addr = os.getenv("SERVER_ADDR")
+  print(f"Using SERVER_ADDR={server_addr} for server address.")
+  server_addr = socket.gethostbyname_ex(server_addr)[2][0]
+  print(f"Using SERVER_ADDR={server_addr} for server address.")
 
 print(f"Page sizes: {page_sizes}")
 print(f"Ring sizes: {ring_sizes}")
@@ -24,40 +32,21 @@ print(f"Running {experiment_count} experiments...")
 time.sleep(5)
 
 
-def run_server(build_dir, config):
-  while True:
-    server_process = subprocess.Popen(["./simple_iou_server"], cwd=build_dir,
-                                      stderr=subprocess.PIPE, text=True)
-    time.sleep(1)
-    stderr = server_process.stderr.read()
-    if "bind failed" in stderr:
-      server_process.kill()
-      server_process.wait()
-      config['PORT'] += 1
-      continue
-    return server_process
-
-
-def build_and_run_server_client(config, build_dir="build"):
+def build_and_run_client(config, build_dir="build"):
   subprocess.run(["mkdir", "-p", build_dir])
   cmake_command = ["cmake", "..", "-DCMAKE_BUILD_TYPE=Release"] + [
     f'-D{key}={value}' for key, value in config.items()]
+  cmake_command += [f"-DSERVER_ADDR=\"{server_addr}\""]
   subprocess.run(cmake_command, cwd=build_dir)
   subprocess.run(["make", "-j32"], cwd=build_dir)
 
-  server_process = multiprocessing.Process(target=run_server,
-                                           args=(build_dir, config))
-  server_process.start()
+  # wait a bit for the server to start
   time.sleep(2)
-
   client_output = subprocess.run(["./simple_iou_client"], cwd=build_dir,
-                                 stdout=subprocess.PIPE, text=True, timeout=60)
+                                 stdout=subprocess.PIPE, text=True)
 
-  # Terminate the server process
-  print("Terminating server...")
-  server_process.terminate()
-  server_process.join()
-  print("Server terminated.")
+  print(client_output.stdout)
+  print(client_output.stderr)
 
   return client_output.stdout
 
@@ -74,19 +63,23 @@ with open('experiment_results.csv', 'w', newline='') as file:
   writer = csv.writer(file)
   writer.writerow(['PAGE_SIZE', 'RING_SIZE', 'NUM_REQUESTS', 'CLIENT_THREADS',
                    'Average Rate (it/s)', 'Average Gbps'])
+
+  experiment_num = 0
   for page_size in page_sizes:
     for ring_size in ring_sizes:
       for client_thread in client_threads:
         print(
-            f" ### Running experiment with PAGE_SIZE={page_size}, RING_SIZE={ring_size}, NUM_REQUESTS={num_requests}, CLIENT_THREADS={client_thread}")
+            f" ### [{experiment_num}] Running experiment with PAGE_SIZE={page_size}, RING_SIZE={ring_size}, NUM_REQUESTS={num_requests}, CLIENT_THREADS={client_thread}")
         port = initial_port
+        initial_port += 1
         config = {'PAGE_SIZE': page_size, 'RING_SIZE': ring_size,
                   'NUM_REQUESTS': num_requests, 'CLIENT_THREADS': client_thread,
                   'PORT': port}
-        output = build_and_run_server_client(config)
+        output = build_and_run_client(config)
         rate, gbps = parse_output(output)
         writer.writerow(
             [page_size, ring_size, num_requests, client_thread, rate, gbps])
+        experiment_num += 1
 
 # Optional: Print CSV content for verification
 with open('experiment_results.csv', 'r') as file:

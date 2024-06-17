@@ -1,54 +1,52 @@
-#include <iostream>
-#include <mutex>
-#include <stack>
+#include <algorithm>
+#include <cstdlib>
+#include <unordered_map>
+#include <vector>
 
 class BufferPool {
  public:
-  BufferPool(size_t buffer_size, size_t initial_pool_size);
-  ~BufferPool();
+  explicit BufferPool(const std::vector<size_t>& buffer_sizes, size_t initial_capacity = 10) {
+    for (size_t size : buffer_sizes) {
+      pools[size].reserve(initial_capacity);
+      for (size_t j = 0; j < initial_capacity; ++j) {
+        pools[size].push_back(static_cast<char*>(std::malloc(size)));
+      }
+    }
+  }
 
-  char* allocate();
-  void deallocate(char* buffer);
+  ~BufferPool() {
+    for (auto& [size, pool] : pools) {
+      for (auto buffer : pool) {
+        std::free(buffer);
+      }
+    }
+  }
+
+  char* allocate(size_t size) {
+    auto it = pools.find(size);
+    if (it != pools.end()) {
+      auto& pool = it->second;
+      if (!pool.empty()) {
+        char* buffer = pool.back();
+        pool.pop_back();
+        return buffer;
+      }
+    }
+    return static_cast<char*>(std::malloc(size));
+  }
+
+  void deallocate(char* buffer, size_t size) {
+    auto it = pools.find(size);
+    if (it != pools.end()) {
+      auto& pool = it->second;
+      if (pool.size() < pool.capacity()) {
+        pool.push_back(buffer);
+        return;
+      }
+    }
+    std::free(buffer);
+  }
 
  private:
-  std::stack<char*> pool;
-  size_t buffer_size;
-
-  void expand_pool(size_t count);
+  std::unordered_map<size_t, std::vector<char*>> pools;
 };
-
-BufferPool::BufferPool(size_t buffer_size, size_t initial_pool_size)
-    : buffer_size(buffer_size) {
-  expand_pool(initial_pool_size);
-}
-
-BufferPool::~BufferPool() {
-  while (!pool.empty()) {
-    delete[] pool.top();
-    pool.pop();
-  }
-}
-
-void BufferPool::expand_pool(size_t count) {
-  for (size_t i = 0; i < count; ++i) {
-    pool.push(new char[buffer_size]);
-  }
-}
-
-char* BufferPool::allocate() {
-//    return new char[buffer_size];
-
-  if (pool.empty()) {
-    return new char[buffer_size];
-  } else {
-    char* buffer = pool.top();
-    pool.pop();
-    return buffer;
-  }
-}
-
-void BufferPool::deallocate(char* buffer) {
-//    delete[] buffer;
-//    return;
-  pool.push(buffer);
-}

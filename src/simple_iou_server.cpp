@@ -1,8 +1,8 @@
 #ifndef __cplusplus
-# include <stdatomic.h>
+#include <stdatomic.h>
 #else
-# include <atomic>
-# define _Atomic(X) std::atomic< X >
+#include <atomic>
+#define _Atomic(X) std::atomic<X>
 #endif
 
 #include <liburing.h>
@@ -16,31 +16,47 @@
 #include <thread>
 #include <vector>
 
+#include "buffer_pool.hpp"
 #include "simple_consts.hpp"
 
+#define BUFFER_POOL_INITIAL_POOL_SIZE 1024
+
 void add_read_request(struct io_uring& ring, int client_socket, size_t seq1,
-                      size_t seq2) {
+                      size_t seq2, RequestData *req) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new RequestData{{seq1, seq2}, READ_EVENT, new int32_t, 0};
+  // auto* req = new RequestData{{seq1, seq2}, READ_EVENT, new int32_t, 0};
+  req->seq[0] = seq1;
+  req->seq[1] = seq2;
+  req->event_type = READ_EVENT;
+  req->buffer_offset = 0;
 
   io_uring_prep_read(sqe, client_socket, req->buffer, sizeof(int32_t), 0);
   io_uring_sqe_set_data(sqe, req);
 }
 
-void add_write_request(struct io_uring& ring, int client_socket, int32_t* data,
-                       size_t seq1, size_t seq2) {
+void add_write_request(struct io_uring& ring, int client_socket,
+                       size_t seq1, size_t seq2,
+                       RequestData * req) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  auto* req = new RequestData{{seq1, seq2}, WRITE_EVENT, data, 0};
+  //  auto* req = new RequestData{{seq1, seq2}, WRITE_EVENT, data, 0};
+  req->seq[0] = seq1;
+  req->seq[1] = seq2;
+  req->event_type = WRITE_EVENT;
+  req->buffer_offset = 0;
 
-  io_uring_prep_send(sqe, client_socket, data, PAGE_SIZE * sizeof(int32_t), 0);
+  io_uring_prep_send(sqe, client_socket, req->buffer, PAGE_SIZE * sizeof(int32_t), 0);
   io_uring_sqe_set_data(sqe, req);
 }
 
 bool event_loop(struct io_uring& ring, int client_socket, size_t client_num) {
+  std::vector buffer_sizes = {PAGE_SIZE * sizeof(int32_t), sizeof(RequestData) + sizeof (int32_t)};
+  BufferPool buffer_pool(buffer_sizes, BUFFER_POOL_INITIAL_POOL_SIZE);
   size_t read_req_num = 0;
   size_t write_req_num = 0;
   for (int i = 0; i < RING_SIZE / 4; i++) {
-    add_read_request(ring, client_socket, client_num, read_req_num++);
+    auto* response = (RequestData*)buffer_pool.allocate(sizeof (RequestData) + PAGE_SIZE * sizeof(int32_t));
+    add_read_request(ring, client_socket, client_num, read_req_num++,
+                     response);
   }
   io_uring_submit(&ring);
 
@@ -75,19 +91,19 @@ bool event_loop(struct io_uring& ring, int client_socket, size_t client_num) {
         std::cout << "Requested page number: " << page_number << std::endl;
 #endif
 
-        auto* response =
-            static_cast<int32_t*>(malloc(PAGE_SIZE * sizeof(int32_t)));
-        if (!response) {
-          std::cout << "Failed to allocate memory for response" << std::endl;
-          return false;
-        }
+        auto* response = (RequestData*)buffer_pool.allocate(sizeof (RequestData) + PAGE_SIZE * sizeof(int32_t));
         for (int i = 0; i < PAGE_SIZE; i++) {
-          response[i] = page_number;
+          response->buffer[i] = page_number;
         }
-        add_write_request(ring, client_socket, response, client_num,
-                          write_req_num++);
-        free(req->buffer);
-        add_read_request(ring, client_socket, client_num, read_req_num++);
+        add_write_request(ring, client_socket, client_num,
+                          write_req_num++, response);
+
+        req->seq[0] = client_num;
+        req->seq[1] = read_req_num++;
+        req->event_type = READ_EVENT;
+        req->buffer_offset = 0;
+        add_read_request(ring, client_socket, client_num, read_req_num++,
+                         req);
         io_uring_submit(&ring);
         break;
       }
@@ -95,7 +111,8 @@ bool event_loop(struct io_uring& ring, int client_socket, size_t client_num) {
 #if VERBOSE
         std::cout << "Write complete, keeping connection open" << std::endl;
 #endif
-        free(req->buffer);
+        // free(req->buffer);
+        buffer_pool.deallocate((char*)req, sizeof (RequestData) + PAGE_SIZE * sizeof(int32_t));
         break;
       default:
         std::cout << "Unknown event type: " << req->event_type << std::endl;
@@ -103,7 +120,6 @@ bool event_loop(struct io_uring& ring, int client_socket, size_t client_num) {
     }
 
     io_uring_cqe_seen(&ring, cqe);
-    delete req;
   }
 }
 
