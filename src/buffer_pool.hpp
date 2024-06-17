@@ -5,7 +5,8 @@
 
 class BufferPool {
  public:
-  explicit BufferPool(const std::vector<size_t>& buffer_sizes, size_t initial_capacity = 10) {
+  explicit BufferPool(const std::vector<size_t>& buffer_sizes,
+                      size_t initial_capacity = 10) {
     for (size_t size : buffer_sizes) {
       pools[size].reserve(initial_capacity);
       for (size_t j = 0; j < initial_capacity; ++j) {
@@ -29,13 +30,16 @@ class BufferPool {
       if (!pool.empty()) {
         char* buffer = pool.back();
         pool.pop_back();
+        //        printf("Reusing buffer of size %lu\n", size);
         return buffer;
       }
     }
+    //    printf("Allocating new buffer of size %lu\n", size);
     return static_cast<char*>(std::malloc(size));
   }
 
   void deallocate(char* buffer, size_t size) {
+    //    printf("Deallocating buffer of size %lu\n", size);
     auto it = pools.find(size);
     if (it != pools.end()) {
       auto& pool = it->second;
@@ -49,4 +53,5 @@ class BufferPool {
 
  private:
   std::unordered_map<size_t, std::vector<char*>> pools;
+  size_t index = 0;
 };
