@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4*4096
 #endif
@@ -30,6 +32,11 @@
 #define CLIENT_THREADS 8
 #endif
 
+#ifndef ALLOCATE_MALLOC
+#define ALLOCATE_MALLOC 1
+#endif
+
+#define BUFFER_POOL_INITIAL_POOL_SIZE 128
 
 struct RequestData {
   size_t seq[2];
@@ -40,14 +47,3 @@ struct RequestData {
 };
 
 enum EventType { READ_EVENT, WRITE_EVENT, SEND_EVENT, RECV_EVENT };
-
-RequestData* create_request_data(size_t buffer_size) {
-    size_t total_size = sizeof(RequestData) + buffer_size * sizeof(int32_t);
-    RequestData* request = static_cast<RequestData*>(std::malloc(total_size));
-    if (!request) {
-        std::cerr << "Failed to allocate memory\n";
-        std::exit(EXIT_FAILURE);
-    }
-    request->buffer_size = buffer_size;
-    return request;
-}

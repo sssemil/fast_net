@@ -15,8 +15,6 @@
 #include "buffer_pool.hpp"
 #include "simple_consts.hpp"
 
-#define BUFFER_POOL_INITIAL_POOL_SIZE 1024
-
 void debug_print_array(uint8_t* arr, uint32_t size) {
   std::ostringstream debug_data_first;
   std::ostringstream debug_data_last;
@@ -66,7 +64,7 @@ void send_receive_data(size_t start_index, size_t end_index,
   std::cout << "[" << thread_index << "] start_index: " << start_index
             << ", end_index: " << end_index << std::endl;
 
-  std::vector buffer_sizes = {PAGE_SIZE * sizeof(int32_t),
+  std::vector buffer_sizes = {sizeof(RequestData) + PAGE_SIZE * sizeof(int32_t),
                               sizeof(RequestData) + sizeof(int32_t)};
   BufferPool buffer_pool(buffer_sizes, BUFFER_POOL_INITIAL_POOL_SIZE);
 
