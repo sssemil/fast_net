@@ -143,7 +143,7 @@ int main() {
   double percentage_received;
   while (total_bytes_received < expected_total_bytes &&
          (percentage_received = (total_bytes_received.load() * 100.0) /
-                                expected_total_bytes) < 99.5) {
+                                expected_total_bytes) < 99.3) {
     printf("Total bytes received: %lu / %lu (%f)\n",
            total_bytes_received.load(), expected_total_bytes,
            percentage_received);
