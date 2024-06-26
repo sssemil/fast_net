@@ -42,7 +42,7 @@ def build_and_run_client(config, build_dir="build"):
 
   # wait a bit for the server to start
   time.sleep(2)
-  client_output = subprocess.run(["./max_client"], cwd=build_dir,
+  client_output = subprocess.run(["./simple_iou_client"], cwd=build_dir,
                                  stdout=subprocess.PIPE, text=True)
 
   print(client_output.stdout)
