@@ -1,7 +1,7 @@
 #pragma once
 
 #ifndef PAGE_SIZE
-#define PAGE_SIZE 4*4096
+#define PAGE_SIZE 8
 #endif
 
 #ifndef PORT
@@ -9,7 +9,7 @@
 #endif
 
 #ifndef RING_SIZE
-#define RING_SIZE 8
+#define RING_SIZE 1024
 #endif
 
 #ifndef NUM_REQUESTS

@@ -31,8 +31,7 @@ void add_read_request(struct io_uring& ring, int client_socket,
   io_uring_sqe_set_data(sqe, req);
 }
 
-uint64_t event_loop(struct io_uring& ring, int client_socket) {
-  uint64_t total_bytes_received = 0;
+uint64_t event_loop(struct io_uring& ring, int client_socket,                                        std::atomic<uint64_t>& total_bytes_received) {
   std::vector buffer_sizes = {sizeof(RequestData) +
                               PAGE_SIZE * sizeof(int32_t)};
   BufferPool buffer_pool(buffer_sizes, BUFFER_POOL_INITIAL_POOL_SIZE);
@@ -79,8 +78,7 @@ void handle_client(const int client_socket,
     exit(EXIT_FAILURE);
   }
 
-  uint64_t client_bytes_received = event_loop(ring, client_socket);
-  total_bytes_received += client_bytes_received;
+  event_loop(ring, client_socket, total_bytes_received);
 
   io_uring_queue_exit(&ring);
   finished_threads++;
