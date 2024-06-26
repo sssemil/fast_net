@@ -143,7 +143,8 @@ int main() {
 
   std::cout << "All threads completed in " << duration.count() << " seconds"
             << std::endl;
-  std::cout << "Average rate: " << total_rate << " it/s" << std::endl;
+  std::cout << "Average rate: " << std::fixed << std::setprecision(2)
+            << total_rate << " it/s" << std::endl;
   std::cout << "Average Gbps: " << total_gbps << " Gbps" << std::endl;
 
   return 0;
