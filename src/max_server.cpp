@@ -143,12 +143,11 @@ int main() {
   double percentage_received;
   while (total_bytes_received < expected_total_bytes &&
          (percentage_received = (total_bytes_received.load() * 100.0) /
-                                expected_total_bytes) < 99.3) {
+                                expected_total_bytes) < 99) {
     printf("Total bytes received: %lu / %lu (%f)\n",
            total_bytes_received.load(), expected_total_bytes,
            percentage_received);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500)); }
 
   auto end_time = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
