@@ -11,9 +11,9 @@ import socket
 # ring_sizes = [x for x in range(128, 1024 + 1, 128)]
 # client_threads = [2 ** x for x in
 #                   range(0, int(m.log(os.cpu_count()) / m.log(2)) + 2)]
-page_sizes = [16, 4096, 16384, 32768]
+page_sizes = [16384, 32768]
 ring_sizes = [8, 16, 64, 128]
-client_threads = [32, 64, 96]
+client_threads = [64, 96, 128]
 num_requests = 1024 * 1024
 initial_port = 12348
 
