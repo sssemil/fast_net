@@ -13,7 +13,7 @@ import socket
 #                   range(0, int(m.log(os.cpu_count()) / m.log(2)) + 2)]
 page_sizes = [16, 512, 4096, 16384]
 ring_sizes = [8, 64]
-client_threads = [1, 64]
+client_threads = [64]
 num_requests = 1024 * 1024
 initial_port = 12348
 
