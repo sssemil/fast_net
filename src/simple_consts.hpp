@@ -33,7 +33,7 @@
 #endif
 
 #ifndef ALLOCATE_MALLOC
-#define ALLOCATE_MALLOC 1
+#define ALLOCATE_MALLOC 0
 #endif
 
 #define BUFFER_POOL_INITIAL_POOL_SIZE 128
