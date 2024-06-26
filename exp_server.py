@@ -26,7 +26,7 @@ time.sleep(5)
 
 def run_server(build_dir, config):
   while True:
-    server_process = subprocess.Popen(["./simple_iou_server"], cwd=build_dir,
+    server_process = subprocess.Popen(["./max_server"], cwd=build_dir,
                                       stderr=subprocess.PIPE, text=True)
     time.sleep(1)
     stderr = server_process.stderr.read()
