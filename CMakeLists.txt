@@ -49,9 +49,11 @@ file(GLOB_RECURSE HEADER_FILES "${PROJECT_SOURCE_DIR}/**/*.hpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/server.cpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/server_iou.cpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/simple_iou_server.cpp")
+list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/max_server.cpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/client.cpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/client_iou.cpp")
 list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/simple_iou_client.cpp")
+list(REMOVE_ITEM SOURCE_FILES "${PROJECT_SOURCE_DIR}/max_client.cpp")
 
 #add_executable(server "${PROJECT_SOURCE_DIR}/server.cpp" ${SOURCE_FILES} ${HEADER_FILES})
 #target_link_libraries(server PRIVATE spdlog::spdlog $<$<BOOL:${MINGW}>:ws2_32>)
@@ -71,6 +73,11 @@ target_link_libraries(simple_iou_server PRIVATE uring)
 add_executable(simple_iou_client "${PROJECT_SOURCE_DIR}/simple_iou_client.cpp" ${SOURCE_FILES} ${HEADER_FILES})
 target_link_libraries(simple_iou_client PRIVATE uring)
 
+add_executable(max_server "${PROJECT_SOURCE_DIR}/max_server.cpp" ${SOURCE_FILES} ${HEADER_FILES})
+target_link_libraries(max_server PRIVATE uring)
+
+add_executable(max_client "${PROJECT_SOURCE_DIR}/max_client.cpp" ${SOURCE_FILES} ${HEADER_FILES})
+target_link_libraries(max_client PRIVATE uring)
 
 add_custom_target(
         format

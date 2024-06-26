@@ -3,7 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # data = pd.read_csv('results/small_grid_e2e_private.csv')
-data = pd.read_csv('results/small_grid_e2e_private_2.csv')
+# data = pd.read_csv('results/small_grid_e2e_private_2.csv')
+data = pd.read_csv('results/small_grid_max_loopback_zeph.csv')
 # data = pd.read_csv('results/small_grid_e2e_private_2_post_buffer_pool.csv')
 
 

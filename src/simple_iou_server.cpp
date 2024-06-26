@@ -184,6 +184,7 @@ int main() {
   std::cout << "Waiting for clients to finish" << std::endl;
   while (finished_threads < client_num) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    printf("Finished threads: %d\n", finished_threads.load());
   }
   std::cout << "Server shutting down" << std::endl;
 }

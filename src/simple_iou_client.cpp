@@ -59,6 +59,16 @@ int setup_socket() {
   return sock;
 }
 
+int make_client_sock(size_t thread_index) {
+  int sock = setup_socket();
+  if (sock < 0) {
+    std::cout << "[" << thread_index << "] Failed to connect to server"
+              << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  return sock;
+}
+
 void send_receive_data(size_t start_index, size_t end_index,
                        size_t thread_index, uint64_t* _total_received) {
   std::cout << "[" << thread_index << "] start_index: " << start_index
@@ -68,12 +78,8 @@ void send_receive_data(size_t start_index, size_t end_index,
                               sizeof(RequestData) + sizeof(int32_t)};
   BufferPool buffer_pool(buffer_sizes, BUFFER_POOL_INITIAL_POOL_SIZE);
 
-  int sock = setup_socket();
-  if (sock < 0) {
-    std::cout << "[" << thread_index << "] Failed to connect to server"
-              << std::endl;
-    exit(EXIT_FAILURE);
-  }
+  int sock = make_client_sock(thread_index);
+
   size_t num_requests = end_index - start_index;
   struct io_uring ring {};
   int r = io_uring_queue_init(RING_SIZE, &ring, IORING_SETUP_SINGLE_ISSUER);

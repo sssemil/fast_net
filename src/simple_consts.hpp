@@ -5,11 +5,11 @@
 #endif
 
 #ifndef PORT
-#define PORT 12348
+#define PORT 12347
 #endif
 
 #ifndef RING_SIZE
-#define RING_SIZE 128
+#define RING_SIZE 8
 #endif
 
 #ifndef NUM_REQUESTS
@@ -33,7 +33,7 @@
 #endif
 
 #ifndef ALLOCATE_MALLOC
-#define ALLOCATE_MALLOC 1
+#define ALLOCATE_MALLOC 0
 #endif
 
 #define BUFFER_POOL_INITIAL_POOL_SIZE 128
