@@ -9,7 +9,7 @@
 #endif
 
 #ifndef RING_SIZE
-#define RING_SIZE 1024
+#define RING_SIZE 8
 #endif
 
 #ifndef NUM_REQUESTS
@@ -29,7 +29,7 @@
 #endif
 
 #ifndef CLIENT_THREADS
-#define CLIENT_THREADS 8
+#define CLIENT_THREADS 128
 #endif
 
 #ifndef ALLOCATE_MALLOC
