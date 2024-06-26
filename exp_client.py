@@ -11,9 +11,9 @@ import socket
 # ring_sizes = [x for x in range(128, 1024 + 1, 128)]
 # client_threads = [2 ** x for x in
 #                   range(0, int(m.log(os.cpu_count()) / m.log(2)) + 2)]
-page_sizes = [32768, 65536]
-ring_sizes = [1, 2, 4, 8]
-client_threads = [64, 128]
+page_sizes = [16, 512, 4096]
+ring_sizes = [8, 64, 128, 1024]
+client_threads = [32, 64, 128]
 num_requests = 1024 * 1024
 initial_port = 12348
 
@@ -42,7 +42,7 @@ def build_and_run_client(config, build_dir="build"):
 
   # wait a bit for the server to start
   time.sleep(2)
-  client_output = subprocess.run(["./max_client"], cwd=build_dir,
+  client_output = subprocess.run(["./simple_iou_client"], cwd=build_dir,
                                  stdout=subprocess.PIPE, text=True)
 
   print(client_output.stdout)
