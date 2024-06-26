@@ -10,7 +10,7 @@ import math as m
 # ring_sizes = [x for x in range(128, 1024 + 1, 128)]
 # client_threads = [2 ** x for x in
 #                   range(0, int(m.log(os.cpu_count()) / m.log(2)) + 2)]
-page_sizes = [16, 512, 4096]
+page_sizes = [16, 512, 4096, 32768]
 ring_sizes = [8, 64, 128, 1024]
 client_threads = [32, 64, 128]
 num_requests = 1024 * 1024
